@@ -24,34 +24,45 @@ def MH_kernel(current_state, current_pdf, path, sigma_proposal):
         return current_state, current_pdf
 
 def initial_distribution(path):
-    current_state = np.random.normal(loc=0, scale=2.0)
+    current_state = np.random.normal(loc=-1, scale=2.0)
     current_pdf = log_target_path(current_state, path)
     return current_state, current_pdf
 
-def reflection_coupling(current_state1, current_state2, sigma_proposal):
+def reflection_maximal_coupling(mu1, mu2, sigma):
+    z = (mu1- mu2) / np.sqrt(sigma)
+    proposal_x = np.random.normal(0, 1)
+    w = np.log(np.random.uniform(0, 1))
+    x = mu1 + np.sqrt(sigma) * proposal_x
+    if w < -0.5 * ((proposal_x + z)**2) - (-0.5 * proposal_x**2):
+        y = x
+    else:
+        y = mu2 - np.sqrt(sigma) * proposal_x
+    return x, y
 
-def coupled_kernel(current_state1, current_pdf1, current_state2, current_pdf2, path, sigma_proposal):
-    proposal1, proposal2 = pass
+def MH_coupled_kernel(current_state1, current_pdf1, current_state2, current_pdf2, path, sigma_proposal):
+    proposal1, proposal2 = reflection_maximal_coupling(current_state1, current_state2, sigma_proposal)
     proposal_pdf1 = log_target_path(proposal1, path)
     proposal_pdf2 = log_target_path(proposal2, path)
     
-    acceptance_prob1 = min(1, np.exp(proposal_pdf1 - current_pdf1))
-    acceptance_prob2 = min(1, np.exp(proposal_pdf2 - current_pdf2))
-    
-    if np.random.rand() < acceptance_prob1:
+    if np.log(np.random.uniform(0, 1)) < proposal_pdf1 - current_pdf1:
         new_state1 = proposal1
         new_pdf1 = proposal_pdf1
     else:
         new_state1 = current_state1
         new_pdf1 = current_pdf1
         
-    if np.random.rand() < acceptance_prob2:
+    if np.log(np.random.uniform(0, 1)) < proposal_pdf2 - current_pdf2:
         new_state2 = proposal2
         new_pdf2 = proposal_pdf2
     else:
         new_state2 = current_state2
         new_pdf2 = current_pdf2
         
-    return new_state1, new_pdf1, new_state2, new_pdf2
+    return new_state1, new_state2, new_pdf1, new_pdf2
+
+
+
+
+
 
 
