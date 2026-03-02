@@ -1,64 +1,81 @@
-
 import numpy as np
-
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from tqdm import tqdm  # pour la barre de progression
+from src.debiasedalgo import unbiased_estimator
+from src.path_MH import MH_kernel, initial_distribution, MH_coupled_kernel
 # Set the random seed for reproducibility and define the parameter D
-set_seed(26)
-D = 4.0
+
+np.random.seed(42)  
+
 
 def log_target0(x):
     return -0.5 * x**2
-def log_target1(x):
+def log_target1(x, D=4):
     return -0.5 * (x - D)**2
 def log_target_path(x, path):
     return (1-path) * log_target0(x) + path * log_target1(x)
 def grad_log_target_path(x):
     return log_target1(x) - log_target0(x)
 
-def MH_kernel(current_state, current_pdf, path, sigma_proposal):
-    proposal = current_state + np.random.normal(0, 1) * sigma_proposal
-    proposal_pdf = log_target_path(proposal, path)
-    acceptance_prob = min(1, np.exp(proposal_pdf - current_pdf))
-    if np.random.rand() < acceptance_prob:
-        return proposal, proposal_pdf
-    else:
-        return current_state, current_pdf
 
-def initial_distribution(path):
-    current_state = np.random.normal(loc=-1, scale=2.0)
-    current_pdf = log_target_path(current_state, path)
-    return current_state, current_pdf
+# --- Paramètres ---
+lambda_grid = np.arange(0, 11) / 10  # 0, 0.1, ..., 1.0
+nrep = 100
+sigmaq = 1
 
-def reflection_maximal_coupling(mu1, mu2, sigma):
-    z = (mu1- mu2) / np.sqrt(sigma)
-    proposal_x = np.random.normal(0, 1)
-    w = np.log(np.random.uniform(0, 1))
-    x = mu1 + np.sqrt(sigma) * proposal_x
-    if w < -0.5 * ((proposal_x + z)**2) - (-0.5 * proposal_x**2):
-        y = x
-    else:
-        y = mu2 - np.sqrt(sigma) * proposal_x
-    return x, y
 
-def MH_coupled_kernel(current_state1, current_pdf1, current_state2, current_pdf2, path, sigma_proposal):
-    proposal1, proposal2 = reflection_maximal_coupling(current_state1, current_state2, sigma_proposal)
-    proposal_pdf1 = log_target_path(proposal1, path)
-    proposal_pdf2 = log_target_path(proposal2, path)
-    
-    if np.log(np.random.uniform(0, 1)) < proposal_pdf1 - current_pdf1:
-        new_state1 = proposal1
-        new_pdf1 = proposal_pdf1
-    else:
-        new_state1 = current_state1
-        new_pdf1 = current_pdf1
-        
-    if np.log(np.random.uniform(0, 1)) < proposal_pdf2 - current_pdf2:
-        new_state2 = proposal2
-        new_pdf2 = proposal_pdf2
-    else:
-        new_state2 = current_state2
-        new_pdf2 = current_pdf2
-        
-    return new_state1, new_state2, new_pdf1, new_pdf2
+def simulate_meeting_times(lambda_grid, nrep, sigmaq):
+
+    k_grid = np.zeros(len(lambda_grid))
+    meetings_list = []
+
+    # --- Boucle sur les lambda ---
+    for ilambda, lam in enumerate(tqdm(lambda_grid, desc="Lambda grid")):
+
+        # fonctions spécifiques à lambda
+        log_target = lambda x: log_target_path(x, path=lam)
+        ri = lambda: initial_distribution(log_target, mean_init=-1, sigma_init=2.0)
+        sk = lambda x, f: MH_kernel(x, f, sigma_proposal=sigmaq, log_target=log_target)
+        ck = lambda x1, x2, f1, f2: MH_coupled_kernel(x1, x2, f1, f2, sigma_proposal=sigmaq, log_target=log_target)
+
+        # réplications
+        meetings = []
+        h_list = [lambda x: x]  # h(x) = x
+        for _ in range(nrep):
+            uestimator = unbiased_estimator(sk, ck, ri, h_list, k=0, m=100, lag=1)
+            meetings.append(uestimator["meetingtime"])
+
+        meetings = np.array(meetings)
+
+        # 99% quantile
+        k_grid[ilambda] = np.floor(np.quantile(meetings, 0.99))
+
+        # stocker dans un DataFrame pour plot
+        df_temp = pd.DataFrame({
+            "ilambda": ilambda,
+            "lambda": lam,
+            "meetings": meetings
+        })
+        meetings_list.append(df_temp)
+
+    # --- Fusionner tous les résultats ---
+    meetings_df = pd.concat(meetings_list, ignore_index=True)
+
+    # --- Plot ---
+    plt.figure(figsize=(10,6))
+    sns.violinplot(x="lambda", y="meetings", data=meetings_df, inner=None, color="skyblue")
+    plt.plot(lambda_grid, k_grid, color="red", marker='o', label="99% quantile")
+    plt.xlabel(r"$\lambda$")
+    plt.ylabel("Meeting times")
+    plt.title("Meeting times for different lambdas")
+    plt.legend()
+    plt.show()
+
+    return k_grid, meetings_df
+
+
 
 
 
