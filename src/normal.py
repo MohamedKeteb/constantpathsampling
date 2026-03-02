@@ -7,15 +7,13 @@ from src.debiasedalgo import unbiased_estimator
 from src.path_MH import MH_kernel, initial_distribution, MH_coupled_kernel
 # Set the random seed for reproducibility and define the parameter D
 
-np.random.seed(42)  
-
 
 def log_target0(x):
     return -0.5 * x**2
 def log_target1(x, D=4):
     return -0.5 * (x - D)**2
 def log_target_path(x, path):
-    return (1-path) * log_target0(x) + path * log_target1(x)
+    return (1-path) * log_target0(x) + path * log_target1(x, D=4)
 def grad_log_target_path(x):
     return log_target1(x) - log_target0(x)
 
@@ -44,7 +42,7 @@ def simulate_meeting_times(lambda_grid, nrep, sigmaq):
         meetings = []
         h_list = [lambda x: x]  # h(x) = x
         for _ in range(nrep):
-            uestimator = unbiased_estimator(sk, ck, ri, h_list, k=0, m=100, lag=1)
+            uestimator = unbiased_estimator(sk, ck, ri, h_list, k=0, m=50, lag=1)
             meetings.append(uestimator["meetingtime"])
 
         meetings = np.array(meetings)

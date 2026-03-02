@@ -7,7 +7,7 @@ def coupled_chain(kernel, coupled_kernel, initial, k, lag, max_iterations = np.i
     init2 = initial()
     current_state1, current_pdf1 = init1
     current_state2, current_pdf2 = init2
-    p = current_state1.shape[0]
+    p = 1 if np.isscalar(current_state1) else current_state1.shape[0]
     samples1 = np.empty((k + preallocate + lag, p))
     samples2 = np.empty((k + preallocate, p))
 
@@ -114,7 +114,7 @@ def unbiased_estimator(kernel, coupled_kernel, initial, h, k, m, lag):
     H_bar_val = H_bar(c_chain, h, k, m, lag)
 
     # --- add  H_bar_val to the dictionary ---
-    c_chain["H_bar_val"] = H_bar_val
+    c_chain["uestimator"] = H_bar_val
 
     return c_chain
 
