@@ -2,14 +2,14 @@ import numpy as np
 import math
 
 
-def coupled_chain(kernel, coupled_kernel, initial, k, lag, max_iterations = np.inf, preallocate = 10):
+def coupled_chain(kernel, coupled_kernel, initial, k, lag, max_iterations = np.inf, preallocate = 100):
     init1 = initial()
     init2 = initial()
     current_state1, current_pdf1 = init1
     current_state2, current_pdf2 = init2
-    p = 1 if np.isscalar(current_state1) else current_state1.shape[0]
-    samples1 = np.empty((k + preallocate + lag, p))
-    samples2 = np.empty((k + preallocate, p))
+    p = 1 
+    samples1 = np.full((k + preallocate + lag, p), np.nan)
+    samples2 = np.full((k + preallocate, p), np.nan) 
 
     nrowsamples1 = k + preallocate + lag
     
@@ -31,15 +31,19 @@ def coupled_chain(kernel, coupled_kernel, initial, k, lag, max_iterations = np.i
     finished = False
     meeting_time = np.inf
     while not finished and iter < max_iterations:
+        
         iter += 1
         if meet:
             current_state1, current_pdf1 = kernel(current_state1, current_pdf1)
             current_state2, current_pdf2 = current_state1, current_pdf1
+            
         else:
-            current_state1, current_state2, current_pdf1, current_pdf2 = coupled_kernel(current_state1, current_pdf1, current_state2, current_pdf2)
+            
+            current_state1, current_pdf1, current_state2, current_pdf2 = coupled_kernel(current_state1, current_pdf1, current_state2, current_pdf2)
             if not meet and np.array_equal(current_state1, current_state2):
                 meet = True
                 meeting_time = iter
+                
         if current_nsamples1 >= nrowsamples1:
             
             samples1 = np.vstack((samples1,np.full((nrowsamples1, p), np.nan)))
@@ -52,8 +56,12 @@ def coupled_chain(kernel, coupled_kernel, initial, k, lag, max_iterations = np.i
 
         if iter >= max(meeting_time, k):
             finished = True
+            
 
-        return {"samples1": samples1, "samples2": samples2, "meetingtime": meeting_time, "iteration": iter, "finished": finished}
+    samples1 = samples1[:meeting_time+1, :] 
+    samples2 = samples2[:meeting_time-lag+1, :]
+
+    return {"samples1": samples1, "samples2": samples2, "meetingtime": meeting_time, "iteration": iter, "finished": finished}
     
 
 
@@ -103,7 +111,7 @@ def H_bar(c_chain, h_list, k, m, lag):
                 deltas_term[i] += coefficient * delta
         else: pass
 
-    return (H_bar_val + deltas_term) / (m- k + 1)
+    return (H_bar_val + deltas_term) / (m - k + 1)
 
 
 def unbiased_estimator(kernel, coupled_kernel, initial, h, k, m, lag):

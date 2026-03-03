@@ -3,8 +3,7 @@ import numpy as np
 def MH_kernel(current_state, current_pdf, sigma_proposal, log_target):
     proposal = current_state + np.random.normal(0, 1) * sigma_proposal
     proposal_pdf = log_target(proposal)
-    acceptance_prob = min(1, np.exp(proposal_pdf - current_pdf))
-    if np.random.rand() < acceptance_prob:
+    if np.log(np.random.uniform(0, 1)) < proposal_pdf - current_pdf:
         return proposal, proposal_pdf
     else:
         return current_state, current_pdf
@@ -44,4 +43,4 @@ def MH_coupled_kernel(current_state1, current_pdf1, current_state2, current_pdf2
         new_state2 = current_state2
         new_pdf2 = current_pdf2
         
-    return new_state1, new_state2, new_pdf1, new_pdf2
+    return new_state1, new_pdf1, new_state2, new_pdf2

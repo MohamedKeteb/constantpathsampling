@@ -13,7 +13,7 @@ def log_target0(x):
 def log_target1(x, D=4):
     return -0.5 * (x - D)**2
 def log_target_path(x, path):
-    return (1-path) * log_target0(x) + path * log_target1(x, D=4)
+    return (1-path) * log_target0(x) + path * log_target1(x)
 def grad_log_target_path(x):
     return log_target1(x) - log_target0(x)
 
@@ -24,7 +24,7 @@ nrep = 100
 sigmaq = 1
 
 
-def simulate_meeting_times(lambda_grid, nrep, sigmaq):
+def simulate_meeting_times(k, m, lag, lambda_grid, nrep, sigmaq):
 
     k_grid = np.zeros(len(lambda_grid))
     meetings_list = []
@@ -36,13 +36,13 @@ def simulate_meeting_times(lambda_grid, nrep, sigmaq):
         log_target = lambda x: log_target_path(x, path=lam)
         ri = lambda: initial_distribution(log_target, mean_init=-1, sigma_init=2.0)
         sk = lambda x, f: MH_kernel(x, f, sigma_proposal=sigmaq, log_target=log_target)
-        ck = lambda x1, x2, f1, f2: MH_coupled_kernel(x1, x2, f1, f2, sigma_proposal=sigmaq, log_target=log_target)
+        ck = lambda x1, f1, x2, f2: MH_coupled_kernel(x1, f1, x2, f2, sigma_proposal=sigmaq, log_target=log_target)
 
         # réplications
         meetings = []
         h_list = [lambda x: x]  # h(x) = x
         for _ in range(nrep):
-            uestimator = unbiased_estimator(sk, ck, ri, h_list, k=0, m=50, lag=1)
+            uestimator = unbiased_estimator(sk, ck, ri, h_list, k, m, lag)
             meetings.append(uestimator["meetingtime"])
 
         meetings = np.array(meetings)
@@ -63,15 +63,47 @@ def simulate_meeting_times(lambda_grid, nrep, sigmaq):
 
     # --- Plot ---
     plt.figure(figsize=(10,6))
-    sns.violinplot(x="lambda", y="meetings", data=meetings_df, inner=None, color="skyblue")
-    plt.plot(lambda_grid, k_grid, color="red", marker='o', label="99% quantile")
+
+# --- Violin plot ---
+    plt.figure(figsize=(14,6))
+
+# --------- 1) Violin plot ----------
+    plt.subplot(1, 2, 1)
+
+    sns.violinplot(
+        x="lambda",
+        y="meetings",
+        data=meetings_df,
+        inner=None,
+        color="skyblue"
+    )
+
     plt.xlabel(r"$\lambda$")
     plt.ylabel("Meeting times")
-    plt.title("Meeting times for different lambdas")
+    plt.title("Distribution of meeting times")
+
+
+    # --------- 2) Courbe des quantiles ----------
+    plt.subplot(1, 2, 2)
+
+    plt.plot(
+        lambda_grid,
+        k_grid,
+        color="red",
+        marker='o',
+        label="99% quantile"
+    )
+
+    plt.xlabel(r"$\lambda$")
+    plt.ylabel("99% quantile")
+    plt.title("99% Quantile for $\lambda$")
+    plt.grid()
     plt.legend()
+
+    plt.tight_layout()
     plt.show()
 
-    return k_grid, meetings_df
+    return k_grid, meetings_df, meetings
 
 
 
