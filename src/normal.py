@@ -24,7 +24,7 @@ nrep = 100
 sigmaq = 1
 
 
-def simulate_meeting_times(k, m, lag, lambda_grid, nrep, sigmaq):
+def tune_km(k, m, lag, lambda_grid, nrep, sigmaq):
 
     k_grid = np.zeros(len(lambda_grid))
     meetings_list = []
@@ -58,8 +58,21 @@ def simulate_meeting_times(k, m, lag, lambda_grid, nrep, sigmaq):
         })
         meetings_list.append(df_temp)
 
+
+        
+
     # --- Fusionner tous les résultats ---
     meetings_df = pd.concat(meetings_list, ignore_index=True)
+
+    meantau = (
+    meetings_df
+    .groupby(['ilambda', 'lambda'])['meetings']
+    .mean()
+    .to_numpy()
+    )
+
+    # tunning of m st the cost est approxiamtively constant
+    m_grid = np.floor(5 * np.max(k_grid) + np.max(meantau) - meantau)
 
     # --- Plot ---
     plt.figure(figsize=(10,6))
@@ -93,17 +106,28 @@ def simulate_meeting_times(k, m, lag, lambda_grid, nrep, sigmaq):
         marker='o',
         label="99% quantile"
     )
+    plt.plot(
+        lambda_grid,
+        m_grid,
+        color="blue",
+        marker='o',
+        label="m st contant cost"
+    )
 
     plt.xlabel(r"$\lambda$")
     plt.ylabel("99% quantile")
-    plt.title("99% Quantile for $\lambda$")
+    plt.title("m and k for $\lambda$")
     plt.grid()
     plt.legend()
 
     plt.tight_layout()
     plt.show()
 
-    return k_grid, meetings_df, meetings
+    
+
+
+    #total_cost = m_grid + meantau
+    return k_grid, m_grid
 
 
 
