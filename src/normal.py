@@ -71,7 +71,7 @@ def tune_km(k, m, lag, lambda_grid, nrep, sigmaq):
     .to_numpy()
     )
 
-    # tunning of m st the cost est approxiamtively constant
+    # tunning of m st the cost is approxiamtively constant
     m_grid = np.floor(5 * np.max(k_grid) + np.max(meantau) - meantau)
 
     # --- Plot ---
