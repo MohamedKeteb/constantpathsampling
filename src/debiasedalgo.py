@@ -1,7 +1,6 @@
 import numpy as np
 import math
 
-
 def coupled_chain(kernel, coupled_kernel, initial, k, lag, max_iterations = np.inf, preallocate = 100):
     init1 = initial()
     init2 = initial()
@@ -58,8 +57,8 @@ def coupled_chain(kernel, coupled_kernel, initial, k, lag, max_iterations = np.i
             finished = True
             
 
-    samples1 = samples1[:meeting_time+1, :] 
-    samples2 = samples2[:meeting_time-lag+1, :]
+    samples1 = samples1[:iter+1, :] 
+    samples2 = samples2[:iter-lag+1, :]
 
     return {"samples1": samples1, "samples2": samples2, "meetingtime": meeting_time, "iteration": iter, "finished": finished}
     
@@ -87,9 +86,12 @@ def H_bar(c_chain, h_list, k, m, lag):
 
     for i, h in enumerate(h_list):
         h_of_chain = np.array([h(x) for x in samples1[k:m+1, :]])
+        #print(f"h_of_chain: {h_of_chain}, i: {i}")
         
         # ensure 2D
-        h_of_chain = np.atleast_2d(h_of_chain)
+        #h_of_chain = np.atleast_2d(h_of_chain)
+        h_of_chain = np.squeeze(h_of_chain) 
+
 
         H_bar_val[i] = np.sum(h_of_chain, axis=0)
 
@@ -103,10 +105,13 @@ def H_bar(c_chain, h_list, k, m, lag):
 
                 coefficient = math.floor((t - k) / lag) - math.ceil(max(lag, t - m) / lag) + 1
                 
-                delta = (
-                    np.atleast_1d(h(samples1[t, :])) -
-                    np.atleast_1d(h(samples2[t - lag, :]))
-                )
+                #delta = (
+                #    np.atleast_1d(h(samples1[t, :])) -
+                #    np.atleast_1d(h(samples2[t - lag, :]))
+                #)
+
+                delta = (np.squeeze(h(samples1[t, :])) - np.squeeze(h(samples2[t - lag, :])))
+
 
                 deltas_term[i] += coefficient * delta
         else: pass
@@ -125,6 +130,12 @@ def unbiased_estimator(kernel, coupled_kernel, initial, h, k, m, lag):
     c_chain["uestimator"] = H_bar_val
 
     return c_chain
+
+
+
+
+
+
 
 
 

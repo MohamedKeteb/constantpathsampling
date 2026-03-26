@@ -24,6 +24,18 @@ def reflection_maximal_coupling(mu1, mu2, sigma):
         y = mu2 - np.sqrt(sigma) * proposal_x
     return x, y
 
+def gamma_maximal_coupling(mu1, mu2, sigma):
+    x = np.random.normal(mu2, np.sqrt(sigma))
+    w = np.log(np.random.uniform(0, 1))
+    if w < -0.5 * ((x - mu1)**2) - (-0.5 * (x - mu2)**2):
+        y = x
+    else:
+        proposal_y, w = np.random.normal(mu1, np.sqrt(sigma)), np.log(np.random.uniform(0, 1))
+        while w >= -0.5 * ((proposal_y - mu2)**2) - (-0.5 * (proposal_y - mu1)**2):
+            proposal_y, w = np.random.normal(mu1, np.sqrt(sigma)), np.log(np.random.uniform(0, 1))
+        y = proposal_y
+    return x, y
+
 def MH_coupled_kernel(current_state1, current_pdf1, current_state2, current_pdf2, sigma_proposal, log_target):
     proposal1, proposal2 = reflection_maximal_coupling(current_state1, current_state2, sigma_proposal)
     proposal_pdf1 = log_target(proposal1)
@@ -44,3 +56,5 @@ def MH_coupled_kernel(current_state1, current_pdf1, current_state2, current_pdf2
         new_pdf2 = current_pdf2
         
     return new_state1, new_pdf1, new_state2, new_pdf2
+
+

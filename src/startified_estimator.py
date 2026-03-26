@@ -1,5 +1,5 @@
 import numpy as np
-from debiasedalgo import *
+from src.debiasedalgo import *
 
 def bin_variance(l0, l1, estimator, n_samples=20):
     lam = np.random.uniform(l0, l1, n_samples)
