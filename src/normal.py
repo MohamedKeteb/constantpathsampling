@@ -343,31 +343,18 @@ def plot_estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag):
 
 
 
-def uestimator_given_lambda(lam, lambda_grid, *args):
-    if len(args) != 5:
-        raise TypeError(
-            "uestimator_given_lambda expects "
-            "(lam, lambda_grid, k_grid, m_grid, nrep, sigmaq, lag)."
-        )
-
-    k_grid, m_grid, nrep, sigmaq, lag = args
-    if np.ndim(nrep) != 0 or np.ndim(sigmaq) != 0 or np.ndim(lag) != 0:
-        raise TypeError(
-            "Invalid arguments. Expected "
-            "(lam, lambda_grid, k_grid, m_grid, nrep, sigmaq, lag). "
-            "You may need to reload `src.normal` in your notebook."
-        )
+def uestimator_given_lambda(lam, lambda_grid, k_grid, m_grid, sigmaq, lag):
 
     # --- trouver le lambda le plus proche ---
-    res = estimate_mom(lambda_grid, k_grid, m_grid, int(nrep), sigmaq, int(lag))
-    m2 = res["m2"]
-    m1 = res["m1"]
+    #res = estimate_mom(lambda_grid, k_grid, m_grid, int(nrep), sigmaq, int(lag))
+    #m2 = res["m2"]
+    #m1 = res["m1"]
     index_lambda = np.argmin(np.abs(lambda_grid - lam))
 
     # --- paramètres associés ---
-    mean_target = m1[index_lambda]
-    var_target = np.maximum(m2[index_lambda] - m1[index_lambda]**2, 0.0)
-    sd_target = np.sqrt(var_target)
+    #mean_target m1[index_lambda]
+    #var_target = np.maximum(m2[index_lambda] - m1[index_lambda]**2, 0.0)
+    #sd_target = np.sqrt(var_target)
 
     k = int(k_grid[index_lambda])
     m = int(m_grid[index_lambda])
@@ -377,7 +364,7 @@ def uestimator_given_lambda(lam, lambda_grid, *args):
 
     # --- initialisation ---
     def ri():
-        chain_state = np.random.normal(loc=mean_target, scale=sd_target, size=1)
+        chain_state = np.random.normal(loc=-1, scale=2, size=1)
         current_pdf = log_target(chain_state)
         return chain_state, current_pdf
 
@@ -403,4 +390,4 @@ def uestimator_given_lambda(lam, lambda_grid, *args):
         lag=lag
     )
 
-    return ue_
+    return ue_["uestimator"][0]
