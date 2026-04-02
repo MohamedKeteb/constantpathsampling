@@ -186,6 +186,10 @@ def estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag):
 
     m1 = np.zeros(len(lambda_grid))
     m2 = np.zeros(len(lambda_grid))
+    m1_ci_low = np.zeros(len(lambda_grid))
+    m1_ci_high = np.zeros(len(lambda_grid))
+    m2_ci_low = np.zeros(len(lambda_grid))
+    m2_ci_high = np.zeros(len(lambda_grid))
     variance = np.zeros(len(lambda_grid))
     variance_ci_low = np.zeros(len(lambda_grid))
     variance_ci_high = np.zeros(len(lambda_grid))
@@ -247,6 +251,14 @@ def estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag):
         # --- Moyennes ---
         m1[ilambda] = np.mean(mom1_estimators)
         m2[ilambda] = np.mean(mom2_estimators)
+        m1_ci_low[ilambda], m1_ci_high[ilambda] = np.quantile(
+            mom1_estimators,
+            [0.025, 0.975]
+        )
+        m2_ci_low[ilambda], m2_ci_high[ilambda] = np.quantile(
+            mom2_estimators,
+            [0.025, 0.975]
+        )
         variance[ilambda] = np.mean(variance_estimators)
         variance_ci_low[ilambda], variance_ci_high[ilambda] = np.quantile(
             variance_estimators,
@@ -257,6 +269,10 @@ def estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag):
     return {
         "m1": m1,
         "m2": m2,
+        "m1_ci_low": m1_ci_low,
+        "m1_ci_high": m1_ci_high,
+        "m2_ci_low": m2_ci_low,
+        "m2_ci_high": m2_ci_high,
         "variance": variance,
         "variance_ci_low": variance_ci_low,
         "variance_ci_high": variance_ci_high,
@@ -267,10 +283,15 @@ def estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag):
 
 def plot_estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag):
     res = estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag)
-    m2 = res["m2"]
-    variance = res["variance"]
-    variance_ci_low = res["variance_ci_low"]
-    variance_ci_high = res["variance_ci_high"]
+    m1 = res["m1"]
+    m1_ci_low = res["m1_ci_low"]
+    m1_ci_high = res["m1_ci_high"]
+    m2 = np.sqrt(res["m2"])
+    m2_ci_low = np.sqrt(np.maximum(res["m2_ci_low"], 0.0))
+    m2_ci_high = np.sqrt(np.maximum(res["m2_ci_high"], 0.0))
+    sqrt_variance = np.sqrt(np.maximum(res["variance"], 0.0))
+    sqrt_variance_ci_low = np.sqrt(np.maximum(res["variance_ci_low"], 0.0))
+    sqrt_variance_ci_high = np.sqrt(np.maximum(res["variance_ci_high"], 0.0))
 
     sns.set_theme(
         style="whitegrid",
@@ -294,44 +315,74 @@ def plot_estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag):
 
     sns.lineplot(
         x=lambda_grid,
-        y=variance,
+        y=sqrt_variance,
         color="#0072B2",
         marker="o",
         linewidth=2.2,
         markersize=6.5,
         ax=axes[0],
-        label=r"$\widehat{\mathrm{Var}}(\hat{E}(\lambda))$"
+        label=r"$\sqrt{\widehat{\mathrm{Var}}(\hat{E}(\lambda))}$"
     )
     axes[0].fill_between(
         lambda_grid,
-        variance_ci_low,
-        variance_ci_high,
+        sqrt_variance_ci_low,
+        sqrt_variance_ci_high,
         color="#0072B2",
         alpha=0.18,
-        label=r"$95\%$ CI"
+        label=r"$95\%$ CI for $\sqrt{\widehat{\mathrm{Var}}(\hat{E}(\lambda))}$"
     )
     sns.lineplot(
         x=lambda_grid,
-        y=np.sqrt(m2),
+        y=m2,
         color="#D55E00",
         marker="o",
         linewidth=2.2,
         markersize=6.5,
-        ax=axes[1],
+        ax=axes[0],
         label=r"$\sqrt{\hat{m}_2(\lambda)}$"
+    )
+    axes[0].fill_between(
+        lambda_grid,
+        m2_ci_low,
+        m2_ci_high,
+        color="#D55E00",
+        alpha=0.18,
+        label=r"$95\%$ CI for $\sqrt{\hat{m}_2(\lambda)}$"
+    )
+
+    sns.lineplot(
+        x=lambda_grid,
+        y=m1,
+        color="#009E73",
+        marker="o",
+        linewidth=2.2,
+        markersize=6.5,
+        ax=axes[1],
+        label=r"$\hat{m}_1(\lambda)$"
+    )
+    axes[1].fill_between(
+        lambda_grid,
+        m1_ci_low,
+        m1_ci_high,
+        color="#009E73",
+        alpha=0.18,
+        label=r"$95\%$ CI"
     )
 
     axes[0].set_xlabel(r"$\lambda$")
-    axes[0].set_ylabel(r"$\widehat{\mathrm{Var}}(\hat{E}(\lambda))$")
-    axes[0].set_title(r"Estimate of $\widehat{\mathrm{Var}}(\hat{E}(\lambda))$ over $\lambda^{[\ell]}$")
+    axes[0].set_ylabel(r"Square-root scale")
+    axes[0].set_title(
+        r"Estimates of $\sqrt{\widehat{\mathrm{Var}}(\hat{E}(\lambda))}$ and "
+        r"$\sqrt{\hat{m}_2(\lambda)}$ over $\lambda^{[\ell]}$"
+    )
     axes[0].set_xlim(np.min(lambda_grid), np.max(lambda_grid))
     axes[0].grid(True, axis="both")
     sns.despine(ax=axes[0], top=True, right=True)
     axes[0].legend(title=None, frameon=False, loc="best")
 
     axes[1].set_xlabel(r"$\lambda$")
-    axes[1].set_ylabel(r"$\sqrt{\hat{m}_2(\lambda)}$")
-    axes[1].set_title(r"Estimate of $\sqrt{\hat{m}_2(\lambda)}$ over $\lambda^{[\ell]}$")
+    axes[1].set_ylabel(r"$\hat{m}_1(\lambda)$")
+    axes[1].set_title(r"Estimate of $\hat{m}_1(\lambda)$ over $\lambda^{[\ell]}$")
     axes[1].set_xlim(np.min(lambda_grid), np.max(lambda_grid))
     axes[1].grid(True, axis="both")
     sns.despine(ax=axes[1], top=True, right=True)

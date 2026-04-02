@@ -6,7 +6,7 @@ from src.debiasedalgo import *
 
 #---------------- Stratified estimator construction given  grid ----------------
 
-def stratified_estimator(grid, estimator, n_per_bin = 1):
+def stratified_estimator(grid, estimator, n_per_bin):
     L = len(grid)-1
     start_est = 0.0
     for l in range(L):
@@ -385,4 +385,114 @@ def plot_estimators_histograms(
         "samples": samples,
         "means": np.array([np.mean(x) for x in samples]),
         "stds": np.array([np.std(x, ddof=1) for x in samples]),
+    }
+
+
+
+
+def propo_startified_estimator(alpha, M, estimator):
+    assert 0 < alpha < 1, "alpha must be in (0, 1)"
+
+    budegt_startum = np.ceil(M ** (1 - alpha))
+    L = int(np.ceil(M ** alpha))
+    grid = np.linspace(0, 1, L + 1)
+    return stratified_estimator(grid, estimator, n_per_bin=int(budegt_startum))
+
+
+def plot_mse_proposed_vs_splitting(
+    alpha,
+    estimator,
+    M_min=50,
+    M_max=200,
+    M_step=10,
+    nrep=100,
+    initial_L=10,
+):
+    """
+    Compare le MSE empirique de :
+    - propo_startified_estimator(alpha, M, estimator)
+    - stratified_estimator_splitting(L=M, estimator, initial_L=10, n_samples=1)
+    """
+    if M_step <= 0:
+        raise ValueError("M_step must be positive.")
+    if M_max < M_min:
+        raise ValueError("M_max must be greater than or equal to M_min.")
+
+    M_grid = np.arange(M_min, M_max + 1, M_step, dtype=int)
+
+    mse_proposed = np.zeros(len(M_grid))
+    mse_splitting = np.zeros(len(M_grid))
+
+    for i, M in enumerate(M_grid):
+        proposed_samples = np.array([
+            propo_startified_estimator(alpha, M, estimator)
+            for _ in range(nrep)
+        ])
+
+        splitting_samples = np.array([
+            stratified_estimator_splitting(M, estimator, initial_L, n_samples=1)
+            for _ in range(nrep)
+        ])
+
+        mse_proposed[i] = np.var(proposed_samples)
+        mse_splitting[i] = np.var(splitting_samples)
+
+    sns.set_theme(
+        style="whitegrid",
+        context="paper",
+        rc={
+            "axes.facecolor": "white",
+            "figure.facecolor": "white",
+            "axes.edgecolor": "#4D4D4D",
+            "axes.linewidth": 0.8,
+            "grid.color": "#D9D9D9",
+            "grid.linewidth": 0.8,
+            "font.size": 11,
+            "axes.labelsize": 12,
+            "axes.titlesize": 13,
+            "legend.fontsize": 10,
+            "xtick.labelsize": 10,
+            "ytick.labelsize": 10,
+        }
+    )
+
+    fig, ax = plt.subplots(figsize=(8.5, 5), dpi=150)
+
+    sns.lineplot(
+        x=M_grid,
+        y=mse_proposed,
+        color="#0072B2",
+        marker="o",
+        linewidth=2.2,
+        markersize=6.0,
+        ax=ax,
+        label=rf"Proposed estimator ($\alpha={alpha}$)"
+    )
+
+    sns.lineplot(
+        x=M_grid,
+        y=mse_splitting,
+        color="#D55E00",
+        marker="o",
+        linewidth=2.2,
+        markersize=6.0,
+        ax=ax,
+        label=rf"Splitting estimator ($L=M$, $L_0={initial_L}$)"
+    )
+
+    ax.set_xlabel(r"$M$")
+    ax.set_ylabel("Empirical MSE")
+    ax.set_title("Comparison of empirical MSE")
+    ax.set_xlim(np.min(M_grid), np.max(M_grid))
+    ax.grid(True, axis="both")
+    sns.despine(ax=ax, top=True, right=True)
+    ax.legend(title=None, frameon=False, loc="best")
+
+    plt.tight_layout()
+    plt.show()
+
+    return {
+        "M_grid": M_grid,
+        "mse_proposed": mse_proposed,
+        "mse_splitting": mse_splitting,
     }
