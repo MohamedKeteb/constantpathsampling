@@ -442,3 +442,42 @@ def uestimator_given_lambda(lam, lambda_grid, k_grid, m_grid, sigmaq, lag):
     )
 
     return ue_["uestimator"][0]
+
+
+def q_unbiased_estimator(L, M, estimator, sqrt_m2):
+
+    grid = np.linspace(0.0, 1.0, L + 1)
+    widths = np.diff(grid)
+
+    # Hauteur de la marche sur chaque intervalle :
+    # proportionnelle à (sqrt_m2(l) + sqrt_m2(l+1)) / 2
+    step_heights = np.array([
+        0.5 * (sqrt_m2[l] + sqrt_m2[l + 1])
+        for l in range(L)
+    ], dtype=float)
+
+    # Normalisation pour obtenir une densité
+    total_mass = np.sum(step_heights * widths)
+    normalized_heights = step_heights / total_mass
+    interval_masses = normalized_heights * widths
+
+    def sqrt_m2_estimate(x):
+        idx = min(int(np.floor(x * L)), L - 1)
+        return normalized_heights[idx]
+
+    def sample_sqrt_m2():
+        # Choix de l'intervalle selon les masses, puis uniforme dans cet intervalle
+        idx = np.random.choice(L, p=interval_masses)
+        a = grid[idx]
+        b = grid[idx + 1]
+        x = np.random.uniform(a, b)
+        return x
+
+    res = 0.0
+    for _ in range(M):
+        lam = sample_sqrt_m2()
+        q_estimate = sqrt_m2_estimate(lam)
+        res += estimator(lam) / q_estimate
+
+    return res / M
+

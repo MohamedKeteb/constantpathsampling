@@ -107,8 +107,17 @@ def stratified_estimator_splitting(L, estimator, initial_L, n_samples):
 
 
 
-def build_M_budget(L, total_budget):
-    pass 
+def build_M_budget(L, total_budget, estimator, n_samples_per_bin=10):
+    budegt_array = np.zeros(L, dtype=int)
+    for i in range(L):
+        a = i / L
+        b = (i + 1) / L
+        lam = np.random.uniform(a, b, n_samples_per_bin)
+        y = np.array([estimator(l) for l in lam])
+        var_estimate = np.var(y)
+        budegt_array[i] = max(1, int(np.floor(var_estimate * total_budget / np.sum(var_estimate))))
+    return budegt_array
+
 
 def build_grid_for_budget(L, M_budget):
     """
@@ -184,7 +193,32 @@ def stratified_estimator_crn(L, M_budget, estimator):
 
     return strat_est
 
-#---------------- Stratified estimator by shooting method----------------
+#---------------- Stratified estimator with proportional allocation ---------------
+def propo_startified_estimator(alpha, M, estimator):
+    assert 0 < alpha < 1, "alpha must be in (0, 1)"
+
+    budegt_startum = np.floor(M ** (1 - alpha))
+    L = int(np.floor(M ** alpha))
+    grid = np.linspace(0, 1, L + 1)
+    return stratified_estimator(grid, estimator, n_per_bin=int(budegt_startum))
+
+#---------------- Stratified estimator with optimal allocation ---------------
+
+def stratified_estimator_bis(L, estimator, budget):
+    grid = np.linspace(0, 1, L + 1)
+    start_est = 0.0
+    for l in range(L):
+        a, b = grid[l], grid[l+1]
+        lam = np.random.uniform(a, b, int(budget[l]))
+        y = np.array([estimator(l) for l in lam])
+        start_est += (b-a) * np.mean(y)
+    return start_est
+
+def optimal_startified_estimator(alpha, M, estimator):
+    assert 0 < alpha < 1, "alpha must be in (0, 1)"
+    L = int(np.floor(M ** alpha))
+    budget = build_M_budget(L, M, estimator, n_samples_per_bin=10)
+    return stratified_estimator_bis(L, estimator, budget)
 
 
 
@@ -279,7 +313,7 @@ def plot_estimators_box_CI(
         capprops=dict(color="#4D4D4D"),
         flierprops=dict(markerfacecolor="#0072B2", markeredgecolor="#0072B2", markersize=4, alpha=0.6),
     )
-    axes[0].set_title("Distribution of stratified estimators")
+    axes[0].set_title("Distribution of the estimators")
     axes[0].set_ylabel("Estimate")
     axes[0].grid(True, axis="y")
     axes[0].grid(False, axis="x")
@@ -390,13 +424,7 @@ def plot_estimators_histograms(
 
 
 
-def propo_startified_estimator(alpha, M, estimator):
-    assert 0 < alpha < 1, "alpha must be in (0, 1)"
 
-    budegt_startum = np.ceil(M ** (1 - alpha))
-    L = int(np.ceil(M ** alpha))
-    grid = np.linspace(0, 1, L + 1)
-    return stratified_estimator(grid, estimator, n_per_bin=int(budegt_startum))
 
 
 def plot_mse_proposed_vs_splitting(
