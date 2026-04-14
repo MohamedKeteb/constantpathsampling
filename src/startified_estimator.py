@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from src.debiasedalgo import *
+from src import *
 
 
 #---------------- Stratified estimator construction given  grid ----------------
@@ -107,47 +107,81 @@ def stratified_estimator_splitting(L, estimator, initial_L, n_samples):
 
 
 
-def build_M_budget(L, total_budget, estimator, n_samples_per_bin=10):
-    budegt_array = np.zeros(L, dtype=int)
+
+def build_budget(L, M, estimator, n_samples_per_bin=10):
+    if L <= 0:
+        raise ValueError("L must be positive.")
+    if M <= 0:
+        raise ValueError("M must be positive.")
+
+    budget_weights = np.zeros(L, dtype=float)
     for i in range(L):
         a = i / L
         b = (i + 1) / L
         lam = np.random.uniform(a, b, n_samples_per_bin)
         y = np.array([estimator(l) for l in lam])
-        var_estimate = np.var(y)
-        budegt_array[i] = max(1, int(np.floor(var_estimate * total_budget / np.sum(var_estimate))))
-    return budegt_array
+        budget_weights[i] = np.var(y) / L
+
+    total_weight = np.sum(budget_weights)
+
+    if total_weight == 0:
+        probs = np.ones(L) / L
+    else:
+        probs = budget_weights / total_weight
+
+    # Deterministic part
+    expected_counts = M * probs
+    budget = np.maximum(1, np.floor(expected_counts).astype(int))
 
 
-def build_grid_for_budget(L, M_budget):
+    # Residual sampling part
+    residual_M = M - np.sum(budget)
+    if residual_M > 0:
+        residual_probs = expected_counts - budget
+        residual_sum = np.sum(residual_probs)
+
+        if residual_sum > 0:
+            residual_probs = residual_probs / residual_sum
+            extra = np.random.multinomial(residual_M, np.maximum(0, residual_probs))
+            budget += extra
+        else:
+            extra = np.random.multinomial(residual_M, probs)
+            budget += extra
+
+    return budget
+
+
+
+
+def build_grid_for_budget(L, budget):
     """
     Construit une grille sur [0, 1] avec L bins uniformes de taille 1/L,
     puis raffine chaque bin en sous-intervalles uniformes.
 
     Parameters:
     - L : nombre de bins de la grille de base
-    - M_budget : vecteur de taille L donnant le nombre de
+    - budget : vecteur de taille L donnant le nombre de
       sous-intervalles dans chaque bin
     """
-    M_budget = np.asarray(M_budget, dtype=int)
-    if M_budget.ndim != 1 or M_budget.shape[0] != L:
-        raise ValueError("M_budget must be a vector of length L.")
-    if np.any(M_budget < 1):
-        raise ValueError("All entries of M_budget must be positive.")
+    budget = np.asarray(budget, dtype=int)
+    if budget.ndim != 1 or budget.shape[0] != L:
+        raise ValueError("budget must be a vector of length L.")
+    if np.any(budget < 1):
+        raise ValueError("All entries of budget must be positive.")
 
     grid = [0.0]
     for i in range(L):
         a = i / L
         b = (i + 1) / L
-        local_grid = np.linspace(a, b, M_budget[i] + 1)
+        local_grid = np.linspace(a, b, budget[i] + 1)
         grid.extend(local_grid[1:])
 
     return np.array(grid)
 
 
 
-def stratified_estimator_indepdent(L, M_budget, estimator):
-    grid = build_grid_for_budget(L, M_budget)
+def stratified_estimator_indepdent(L, budget, estimator):
+    grid = build_grid_for_budget(L, budget)
     return stratified_estimator(grid, estimator, n_per_bin=1)
 
 
@@ -156,14 +190,14 @@ def stratified_estimator_indepdent(L, M_budget, estimator):
 
 
 
-def stratified_estimator_crn(L, M_budget, estimator):
-    grid = build_grid_for_budget(L, M_budget)
+def stratified_estimator_crn(L, budget, estimator):
+    grid = build_grid_for_budget(L, budget)
 
     # Build the list of sub-bins contained in each main bin.
     subbins_by_bin = []
     start = 0
     for i in range(L):
-        n_subbins = int(M_budget[i])
+        n_subbins = int(budget[i])
         local_subbins = []
         for j in range(n_subbins):
             local_subbins.append((grid[start + j], grid[start + j + 1]))
@@ -173,14 +207,14 @@ def stratified_estimator_crn(L, M_budget, estimator):
     strat_est = 0.0
 
     # Use one common uniform draw per sub-bin index and map it across bins.
-    max_subbins = int(np.max(M_budget))
+    max_subbins = int(np.max(budget))
     for j in range(max_subbins):
         u = np.random.uniform()
 
         values = []
         widths = []
         for i in range(L):
-            if j < M_budget[i]:
+            if j < budget[i]:
                 a, b = subbins_by_bin[i][j]
 
                 # Reuse the same random variable u in every bin by affine scaling.
@@ -214,10 +248,9 @@ def stratified_estimator_bis(L, estimator, budget):
         start_est += (b-a) * np.mean(y)
     return start_est
 
-def optimal_startified_estimator(alpha, M, estimator):
+def optimal_startified_estimator(alpha, M, budget, estimator):
     assert 0 < alpha < 1, "alpha must be in (0, 1)"
     L = int(np.floor(M ** alpha))
-    budget = build_M_budget(L, M, estimator, n_samples_per_bin=10)
     return stratified_estimator_bis(L, estimator, budget)
 
 
@@ -301,7 +334,7 @@ def plot_estimators_box_CI(
         }
     )
 
-    fig, axes = plt.subplots(1, 3, figsize=(16, 5), dpi=150)
+    fig, axes = plt.subplots(1, 2, figsize=figsize, dpi=150)
 
     axes[0].boxplot(
         samples,
@@ -337,24 +370,19 @@ def plot_estimators_box_CI(
     )
     axes[1].set_xticks(x)
     axes[1].set_xticklabels(labels)
-    axes[1].set_title(f"Mean estimates with {int(100 * ci_level)}% confidence intervals")
+    axes[1].set_title(f"{int(100 * ci_level)}% confidence intervals of $r_{{01}}$")
     axes[1].set_ylabel("Estimate")
     axes[1].grid(True, axis="y")
     axes[1].grid(False, axis="x")
 
-    axes[2].bar(x, ci_lengths, color="#D55E00", edgecolor="#4D4D4D", width=0.7)
-    axes[2].set_xticks(x)
-    axes[2].set_xticklabels(labels)
-    axes[2].set_title("Confidence interval lengths")
-    axes[2].set_ylabel("CI length")
-    axes[2].grid(True, axis="y")
-    axes[2].grid(False, axis="x")
-
     plt.tight_layout()
     plt.show()
 
-    for label, ci_len in zip(labels, ci_lengths):
-        print(f"{label}: CI length = {ci_len:.6f}")
+    for label, ci_low, ci_high, ci_len in zip(labels, ci_lows, ci_highs, ci_lengths):
+        print(
+            f"{label}: CI = [{ci_low:.6f}, {ci_high:.6f}], "
+            f"length = {ci_len:.6f}"
+        )
 
     return {
         "samples": samples,
@@ -524,3 +552,5 @@ def plot_mse_proposed_vs_splitting(
         "mse_proposed": mse_proposed,
         "mse_splitting": mse_splitting,
     }
+
+
