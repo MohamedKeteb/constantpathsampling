@@ -106,15 +106,12 @@ def stratified_estimator_splitting(L, estimator, initial_L, n_samples):
 #--  Startification with budget and independent within bins----------------
 
 
-
-
 def build_budget(L, M, estimator, n_samples_per_bin=10):
-    if L <= 0:
-        raise ValueError("L must be positive.")
-    if M <= 0:
-        raise ValueError("M must be positive.")
+    if M < L:
+        raise ValueError("M must be at least L, because each bin gets at least 1 sample.")
 
     budget_weights = np.zeros(L, dtype=float)
+
     for i in range(L):
         a = i / L
         b = (i + 1) / L
@@ -123,30 +120,24 @@ def build_budget(L, M, estimator, n_samples_per_bin=10):
         budget_weights[i] = np.var(y) / L
 
     total_weight = np.sum(budget_weights)
-
-    if total_weight == 0:
-        probs = np.ones(L) / L
-    else:
-        probs = budget_weights / total_weight
-
-    # Deterministic part
+    probs = budget_weights / total_weight
     expected_counts = M * probs
     budget = np.maximum(1, np.floor(expected_counts).astype(int))
 
-
-    # Residual sampling part
+    # sampling part
     residual_M = M - np.sum(budget)
+
     if residual_M > 0:
         residual_probs = expected_counts - budget
-        residual_sum = np.sum(residual_probs)
 
-        if residual_sum > 0:
-            residual_probs = residual_probs / residual_sum
-            extra = np.random.multinomial(residual_M, np.maximum(0, residual_probs))
-            budget += extra
-        else:
-            extra = np.random.multinomial(residual_M, probs)
-            budget += extra
+        # Remove negative numerical artifacts before normalization.
+        residual_probs = np.maximum(0, residual_probs)
+        residual_sum = np.sum(residual_probs)
+        residual_probs = residual_probs / residual_sum
+      
+
+        extra = np.random.multinomial(residual_M, residual_probs)
+        budget += extra
 
     return budget
 
@@ -248,18 +239,8 @@ def stratified_estimator_bis(L, estimator, budget):
         start_est += (b-a) * np.mean(y)
     return start_est
 
-def optimal_startified_estimator(alpha, M, budget, estimator):
-    assert 0 < alpha < 1, "alpha must be in (0, 1)"
-    L = int(np.floor(M ** alpha))
+def optimal_startified_estimator(L, estimator, budget):
     return stratified_estimator_bis(L, estimator, budget)
-
-
-
-
-
-
-
-
 
 
 
@@ -394,163 +375,96 @@ def plot_estimators_box_CI(
 
 
 
-def plot_estimators_histograms(
-    estimators,
-    labels,
-    nrep=200,
-    bins=30,
-    figsize=(8, 5),
-    alpha=0.45,
-):
-    """
-    Plot overlaid empirical histograms for a list of estimators.
 
-    Parameters:
-    - estimators: list of callables with no argument, each returning one estimate
-    - labels: list of estimator names
-    - nrep: number of Monte Carlo replications
-    - bins: number of histogram bins
-    - figsize: matplotlib figure size
-    - alpha: histogram transparency
-    """
-    if len(estimators) != len(labels):
-        raise ValueError("estimators and labels must have the same length.")
-
-    samples = [np.array([estimator() for _ in range(nrep)]) for estimator in estimators]
-
-    plt.style.use("seaborn-v0_8-whitegrid")
-    fig, ax = plt.subplots(figsize=figsize, dpi=150)
-
-    colors = plt.cm.tab10(np.linspace(0, 1, len(estimators)))
-
-    for values, label, color in zip(samples, labels, colors):
-        ax.hist(
-            values,
-            bins=bins,
-            alpha=alpha,
-            label=label,
-            color=color,
-            edgecolor="black",
-            linewidth=0.8,
-        )
-        ax.axvline(np.mean(values), color=color, linestyle="--", linewidth=1.5)
-
-    ax.set_title("Overlaid histograms of estimators")
-    ax.set_xlabel("Estimate")
-    ax.set_ylabel("Frequency")
-    ax.legend(frameon=False)
-
-    plt.tight_layout()
-    plt.show()
-
-    return {
-        "samples": samples,
-        "means": np.array([np.mean(x) for x in samples]),
-        "stds": np.array([np.std(x, ddof=1) for x in samples]),
-    }
-
-
-
-
-
-
-
-def plot_mse_proposed_vs_splitting(
-    alpha,
+def compare_mse_budget_grid_plot(
+    L,
+    M_grid,
     estimator,
-    M_min=50,
-    M_max=200,
-    M_step=10,
+    sqrt_m2,
+    true_value,
     nrep=100,
-    initial_L=10,
+    n_samples_per_bin=10
 ):
     """
-    Compare le MSE empirique de :
-    - propo_startified_estimator(alpha, M, estimator)
-    - stratified_estimator_splitting(L=M, estimator, initial_L=10, n_samples=1)
+    Compare les MSE de q_unbiased_estimator et optimal_startified_estimator
+    pour une grille croissante de budgets M.
+
+    Pour chaque M :
+    - construit un budget avec build_budget(L, M, estimator)
+    - estime la MSE de chaque méthode sur nrep répétitions
+    - trace les MSE en échelle log-log
     """
-    if M_step <= 0:
-        raise ValueError("M_step must be positive.")
-    if M_max < M_min:
-        raise ValueError("M_max must be greater than or equal to M_min.")
 
-    M_grid = np.arange(M_min, M_max + 1, M_step, dtype=int)
+    rows = []
 
-    mse_proposed = np.zeros(len(M_grid))
-    mse_splitting = np.zeros(len(M_grid))
+    for M in M_grid:
+        budget = build_budget(
+            L=L,
+            M=M,
+            estimator=estimator,
+            n_samples_per_bin=n_samples_per_bin
+        )
 
-    for i, M in enumerate(M_grid):
-        proposed_samples = np.array([
-            propo_startified_estimator(alpha, M, estimator)
-            for _ in range(nrep)
-        ])
+        estimates_q = np.zeros(nrep)
+        estimates_opt = np.zeros(nrep)
 
-        splitting_samples = np.array([
-            stratified_estimator_splitting(M, estimator, initial_L, n_samples=1)
-            for _ in range(nrep)
-        ])
+        for r in range(nrep):
+            estimates_q[r] = q_unbiased_estimator(
+                L,
+                M,
+                estimator,
+                sqrt_m2
+            )
 
-        mse_proposed[i] = np.var(proposed_samples)
-        mse_splitting[i] = np.var(splitting_samples)
+            estimates_opt[r] = optimal_startified_estimator(
+                L,
+                estimator,
+                budget
+            )
 
-    sns.set_theme(
-        style="whitegrid",
-        context="paper",
-        rc={
-            "axes.facecolor": "white",
-            "figure.facecolor": "white",
-            "axes.edgecolor": "#4D4D4D",
-            "axes.linewidth": 0.8,
-            "grid.color": "#D9D9D9",
-            "grid.linewidth": 0.8,
-            "font.size": 11,
-            "axes.labelsize": 12,
-            "axes.titlesize": 13,
-            "legend.fontsize": 10,
-            "xtick.labelsize": 10,
-            "ytick.labelsize": 10,
-        }
-    )
+        mse_q = np.mean((estimates_q - true_value) ** 2)
+        mse_opt = np.mean((estimates_opt - true_value) ** 2)
 
-    fig, ax = plt.subplots(figsize=(8.5, 5), dpi=150)
+        rows.append({
+            "M": M,
+            "estimator": "IS",
+            "mse": mse_q,
+            #"mean": np.mean(estimates_q),
+            #"variance": np.var(estimates_q, ddof=1),
+            #"bias": np.mean(estimates_q) - true_value
+        })
+
+        rows.append({
+            "M": M,
+            "estimator": "Startified sampling",
+            "mse": mse_opt,
+            #"mean": np.mean(estimates_opt),
+            #"variance": np.var(estimates_opt, ddof=1),
+            #"bias": np.mean(estimates_opt) - true_value
+        })
+
+    df_results = pd.DataFrame(rows)
+
+    sns.set_theme(style="whitegrid", context="paper")
+
+    plt.figure(figsize=(7, 4.5), dpi=150)
 
     sns.lineplot(
-        x=M_grid,
-        y=mse_proposed,
-        color="#0072B2",
+        data=df_results,
+        x="M",
+        y="mse",
+        hue="estimator",
         marker="o",
-        linewidth=2.2,
-        markersize=6.0,
-        ax=ax,
-        label=rf"Proposed estimator ($\alpha={alpha}$)"
+        linewidth=2
     )
 
-    sns.lineplot(
-        x=M_grid,
-        y=mse_splitting,
-        color="#D55E00",
-        marker="o",
-        linewidth=2.2,
-        markersize=6.0,
-        ax=ax,
-        label=rf"Splitting estimator ($L=M$, $L_0={initial_L}$)"
-    )
-
-    ax.set_xlabel(r"$M$")
-    ax.set_ylabel("Empirical MSE")
-    ax.set_title("Comparison of empirical MSE")
-    ax.set_xlim(np.min(M_grid), np.max(M_grid))
-    ax.grid(True, axis="both")
-    sns.despine(ax=ax, top=True, right=True)
-    ax.legend(title=None, frameon=False, loc="best")
-
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.xlabel("Budget N")
+    plt.ylabel("MSE")
+    plt.title("Comparaison of MSE")
+    plt.grid(True, which="both", alpha=0.4)
     plt.tight_layout()
     plt.show()
 
-    return {
-        "M_grid": M_grid,
-        "mse_proposed": mse_proposed,
-        "mse_splitting": mse_splitting,
-    }
-
-
+    #return df_results
