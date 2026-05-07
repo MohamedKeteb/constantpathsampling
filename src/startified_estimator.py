@@ -436,7 +436,7 @@ def compare_mse_budget_grid_plot(
 
         rows.append({
             "M": M,
-            "estimator": "Startified sampling",
+            "estimator": "Stratified sampling",
             "mse": mse_opt,
             #"mean": np.mean(estimates_opt),
             #"variance": np.var(estimates_opt, ddof=1),
