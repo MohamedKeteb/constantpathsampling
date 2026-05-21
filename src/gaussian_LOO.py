@@ -197,6 +197,58 @@ class BayesianLinearRegressionTempering:
         """
         return self.log_prior(theta) + self.log_likelihood_full(theta)
 
+    def posterior_params(self, mask=None):
+        """
+        Computes the conjugate Gaussian posterior parameters.
+
+        If mask is provided, only observations with mask == True are used.
+        """
+        if mask is None:
+            X = self.X
+            y = self.y
+        else:
+            mask = np.asarray(mask, dtype=bool)
+            X = self.X[mask]
+            y = self.y[mask]
+
+        prior_precision = np.linalg.inv(self.Sigma_0)
+        posterior_precision = prior_precision + (X.T @ X) / self.sigma2
+        posterior_cov = np.linalg.inv(posterior_precision)
+        posterior_mean = posterior_cov @ (
+            prior_precision @ self.theta_0 + (X.T @ y) / self.sigma2
+        )
+        return posterior_mean, posterior_cov
+
+    def posterior_params_minus_i(self, index_i):
+        """Computes the conjugate posterior parameters given y_{-i}."""
+        mask = np.ones(len(self.y), dtype=bool)
+        mask[index_i] = False
+        return self.posterior_params(mask=mask)
+
+    def loo_log_predictive_density_i(self, index_i):
+        """
+        Computes the exact conjugate LOO log predictive density for observation i.
+        """
+        posterior_mean, posterior_cov = self.posterior_params_minus_i(index_i)
+        x_i = self.X[index_i]
+        predictive_mean = x_i @ posterior_mean
+        predictive_var = self.sigma2 + x_i @ posterior_cov @ x_i
+        return stats.norm.logpdf(
+            self.y[index_i],
+            loc=predictive_mean,
+            scale=np.sqrt(predictive_var),
+        )
+
+    def exact_loo_elpd(self):
+        """
+        Computes all exact conjugate LOO log predictive densities and their sum.
+        """
+        loo_values = np.array([
+            self.loo_log_predictive_density_i(i)
+            for i in range(len(self.y))
+        ])
+        return loo_values, np.sum(loo_values)
+
     def log_path(self, theta, lambda_val, index_i):
         """
         Computes the unnormalized log-density of the geometric path:
@@ -232,4 +284,3 @@ class BayesianLinearRegressionTempering:
             (1.0 - lambda_val) * log_posterior_minus_i
             + lambda_val * log_posterior_full
         )
-
