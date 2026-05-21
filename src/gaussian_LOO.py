@@ -1,6 +1,9 @@
 import numpy as np
+from src import *
 import scipy.stats as stats
 from scipy.special import logsumexp
+
+############# Mixture estimator for LOO, Zanella's paper #############
 
 class MixtureMetropolisHastings:
     def __init__(self, X, y, theta_0, Sigma_0, sigma2_noise):
@@ -102,7 +105,6 @@ class ZanellaLOOEstimator:
         # 3. Calcul par ratio d'importance sampling pour chaque point i
         for i in range(self.n):
             # Log du poids d'importance non-normalisé pour la cible i :
-            # log w_i(\theta^s) = log p(\theta^s | y_{-i}) - log q_mix(\theta^s)
             # ce qui équivaut à : -log p(y_i | \theta^s) - log q_mix(\theta^s)
             log_w_s = -log_lik_matrix[:, i] - log_q_mix  # Shape: (S,)
             
@@ -117,3 +119,117 @@ class ZanellaLOOEstimator:
             loo_log_densities[i] = log_numerator_sum - log_denominator_sum
             
         return loo_log_densities, np.sum(loo_log_densities)
+    
+
+    ######### Unbiased estimator for LOO, using the coupled chains from the debiased MCMC algorithm #########
+
+
+class BayesianLinearRegressionTempering:
+    def __init__(self, X, y, theta_0, Sigma_0, sigma2_noise):
+        """
+        Gaussian linear regression model used to build the LOO geometric path.
+
+        For an index i, the path is
+
+            pi_{i,lambda}(theta)
+            proportional to
+            p(theta | y_{-i})^{1 - lambda} p(theta | y)^{lambda}.
+
+        Since both posteriors are only needed up to normalizing constants,
+        this is equivalent to
+
+            p(theta) prod_{j != i} p(y_j | theta) p(y_i | theta)^lambda.
+        """
+        self.X = np.asarray(X)
+        self.y = np.asarray(y)
+        self.theta_0 = np.asarray(theta_0, dtype=float)
+        self.Sigma_0 = np.asarray(Sigma_0, dtype=float)
+        self.sigma2 = float(sigma2_noise) 
+
+    def log_prior(self, theta):
+        """Computes log p(theta)"""
+        return stats.multivariate_normal.logpdf(theta, mean=self.theta_0, cov=self.Sigma_0)
+
+    def log_likelihood_i(self, theta, index_i):
+        """Computes log p(y_i | theta)."""
+        theta = np.asarray(theta)
+        x_i = self.X[index_i]
+        y_i = self.y[index_i]
+        pred_i = np.dot(x_i, theta)
+        return stats.norm.logpdf(y_i, loc=pred_i, scale=np.sqrt(self.sigma2))
+
+    def log_likelihood_minus_i(self, theta, index_i):
+        """Computes sum_{j != i} log p(y_j | theta)."""
+        theta = np.asarray(theta)
+        mask = np.ones(len(self.y), dtype=bool)
+        mask[index_i] = False
+
+        preds_minus_i = self.X[mask] @ theta
+        return np.sum(
+            stats.norm.logpdf(
+                self.y[mask],
+                loc=preds_minus_i,
+                scale=np.sqrt(self.sigma2),
+            )
+        )
+
+    def log_likelihood_full(self, theta):
+        """Computes sum_j log p(y_j | theta)."""
+        theta = np.asarray(theta)
+        preds = self.X @ theta
+        return np.sum(
+            stats.norm.logpdf(
+                self.y,
+                loc=preds,
+                scale=np.sqrt(self.sigma2),
+            )
+        )
+
+    def log_posterior_minus_i(self, theta, index_i):
+        """
+        Computes the unnormalized log posterior log p(theta | y_{-i}).
+        """
+        return self.log_prior(theta) + self.log_likelihood_minus_i(theta, index_i)
+
+    def log_posterior_full(self, theta):
+        """
+        Computes the unnormalized full log posterior log p(theta | y).
+        """
+        return self.log_prior(theta) + self.log_likelihood_full(theta)
+
+    def log_path(self, theta, lambda_val, index_i):
+        """
+        Computes the unnormalized log-density of the geometric path:
+
+            pi_{i,lambda}(theta) proportional to
+            p(theta | y_{-i})^{1 - lambda} p(theta | y)^lambda
+
+        Therefore
+
+            log pi_{i,lambda}(theta)
+            = (1 - lambda) log p(theta | y_{-i})
+              + lambda log p(theta | y)
+
+        The returned value is unnormalized. Constants depending only on lambda
+        are ignored, which is enough for MCMC and path sampling.
+        
+        Parameters:
+        -----------
+        theta : np.ndarray (d,)
+            Parameter vector where the path density is evaluated.
+        lambda_val : float
+            Tempering parameter between 0 (LOO posterior) and 1 (Full posterior).
+        index_i : int
+            Index of the omitted data point 'i'.
+        """
+        if not 0.0 <= lambda_val <= 1.0:
+            raise ValueError("lambda_val must be in [0, 1].")
+
+        log_posterior_minus_i = self.log_posterior_minus_i(theta, index_i)
+        log_posterior_full = self.log_posterior_full(theta)
+
+        return (
+            (1.0 - lambda_val) * log_posterior_minus_i
+            + lambda_val * log_posterior_full
+        )
+

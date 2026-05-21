@@ -143,7 +143,6 @@ def build_budget(L, M, estimator, n_samples_per_bin=10):
 
 
 
-
 def build_grid_for_budget(L, budget):
     """
     Construit une grille sur [0, 1] avec L bins uniformes de taille 1/L,

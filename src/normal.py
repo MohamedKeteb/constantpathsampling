@@ -7,21 +7,13 @@ from src.debiasedalgo import *
 from src.path_MH import *
 
 
-def log_target0(x):
-    return -0.5 * x**2
-def log_target1(x, D=4):
-    return -0.5 * (x - D)**2
-def log_target_path(x, path):
-    return (1-path) * log_target0(x) + path * log_target1(x)
-def grad_log_target_path(x):
-    return log_target1(x) - log_target0(x)
 
 
 # --- Paramètres ---
 
 
 
-def tune_km_grid(lambda_grid, lag, sigmaq, nrep=100):
+def tune_km_grid(lambda_grid, lag, sigmaq, log_target_path, nrep=100):
 
     k_grid = np.zeros(len(lambda_grid))
     meetings_list = []
@@ -90,10 +82,10 @@ def tune_km_grid(lambda_grid, lag, sigmaq, nrep=100):
 
 
 
-def plot_km_grid(lambda_grid, lag, sigmaq, nrep):
+def plot_km_grid(lambda_grid, lag, sigmaq, log_target_path, nrep):
 
 
-    results = tune_km_grid(lambda_grid, lag, sigmaq, nrep)
+    results = tune_km_grid(lambda_grid, lag, sigmaq, log_target_path, nrep)
     k_grid = results["k_grid"]
     m_grid = results["m_grid"]
     meetings_df = results["meetings_df"]
@@ -182,7 +174,7 @@ def plot_km_grid(lambda_grid, lag, sigmaq, nrep):
 
 
 
-def estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag):
+def estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag, log_target_path, grad_log_target_path):
 
     m1 = np.zeros(len(lambda_grid))
     m2 = np.zeros(len(lambda_grid))
@@ -281,8 +273,8 @@ def estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag):
 
 
 
-def plot_estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag):
-    res = estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag)
+def plot_estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag, log_target_path, grad_log_target_path):
+    res = estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag, log_target_path, grad_log_target_path)
     m1 = res["m1"]
     m1_ci_low = res["m1_ci_low"]
     m1_ci_high = res["m1_ci_high"]
@@ -394,7 +386,7 @@ def plot_estimate_mom(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag):
 
 
 
-def uestimator_given_lambda(lam, lambda_grid, k_grid, m_grid, sigmaq, lag):
+def uestimator_given_lambda(lam, lambda_grid, k_grid, m_grid, sigmaq, lag, log_target_path, grad_log_target_path):
 
     # --- trouver le lambda le plus proche ---
     #res = estimate_mom(lambda_grid, k_grid, m_grid, int(nrep), sigmaq, int(lag))
