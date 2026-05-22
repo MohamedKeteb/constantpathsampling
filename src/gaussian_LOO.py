@@ -144,7 +144,11 @@ class BayesianLinearRegressionTempering:
         self.y = np.asarray(y)
         self.theta_0 = np.asarray(theta_0, dtype=float)
         self.Sigma_0 = np.asarray(Sigma_0, dtype=float)
-        self.sigma2 = float(sigma2_noise) 
+        self.sigma2 = float(sigma2_noise)
+        self._normal_logpdf_const = -0.5 * np.log(2.0 * np.pi * self.sigma2)
+        self._prior_precision = np.linalg.inv(self.Sigma_0)
+        self._full_xtx = self.X.T @ self.X
+        self._full_xty = self.X.T @ self.y
 
     def log_prior(self, theta):
         """Computes log p(theta)"""
@@ -156,33 +160,24 @@ class BayesianLinearRegressionTempering:
         x_i = self.X[index_i]
         y_i = self.y[index_i]
         pred_i = np.dot(x_i, theta)
-        return stats.norm.logpdf(y_i, loc=pred_i, scale=np.sqrt(self.sigma2))
+        residual_i = y_i - pred_i
+        return self._normal_logpdf_const - 0.5 * residual_i**2 / self.sigma2
 
     def log_likelihood_minus_i(self, theta, index_i):
         """Computes sum_{j != i} log p(y_j | theta)."""
-        theta = np.asarray(theta)
-        mask = np.ones(len(self.y), dtype=bool)
-        mask[index_i] = False
-
-        preds_minus_i = self.X[mask] @ theta
-        return np.sum(
-            stats.norm.logpdf(
-                self.y[mask],
-                loc=preds_minus_i,
-                scale=np.sqrt(self.sigma2),
-            )
+        return (
+            self.log_likelihood_full(theta)
+            - self.log_likelihood_i(theta, index_i)
         )
 
     def log_likelihood_full(self, theta):
         """Computes sum_j log p(y_j | theta)."""
         theta = np.asarray(theta)
         preds = self.X @ theta
+        residuals = self.y - preds
         return np.sum(
-            stats.norm.logpdf(
-                self.y,
-                loc=preds,
-                scale=np.sqrt(self.sigma2),
-            )
+            self._normal_logpdf_const
+            - 0.5 * residuals**2 / self.sigma2
         )
 
     def log_posterior_minus_i(self, theta, index_i):
@@ -197,33 +192,34 @@ class BayesianLinearRegressionTempering:
         """
         return self.log_prior(theta) + self.log_likelihood_full(theta)
 
-    def posterior_params(self, mask=None):
-        """
-        Computes the conjugate Gaussian posterior parameters.
-
-        If mask is provided, only observations with mask == True are used.
-        """
-        if mask is None:
-            X = self.X
-            y = self.y
-        else:
-            mask = np.asarray(mask, dtype=bool)
-            X = self.X[mask]
-            y = self.y[mask]
-
-        prior_precision = np.linalg.inv(self.Sigma_0)
-        posterior_precision = prior_precision + (X.T @ X) / self.sigma2
+    def _posterior_params_from_sufficient_stats(self, xtx, xty):
+        prior_precision = self._prior_precision
+        posterior_precision = prior_precision + xtx / self.sigma2
         posterior_cov = np.linalg.inv(posterior_precision)
         posterior_mean = posterior_cov @ (
-            prior_precision @ self.theta_0 + (X.T @ y) / self.sigma2
+            prior_precision @ self.theta_0 + xty / self.sigma2
         )
         return posterior_mean, posterior_cov
 
+    def posterior_params(self):
+        """
+        Computes the conjugate Gaussian posterior parameters for all data.
+        """
+        return self._posterior_params_from_sufficient_stats(
+            self._full_xtx,
+            self._full_xty,
+        )
+
     def posterior_params_minus_i(self, index_i):
         """Computes the conjugate posterior parameters given y_{-i}."""
-        mask = np.ones(len(self.y), dtype=bool)
-        mask[index_i] = False
-        return self.posterior_params(mask=mask)
+        x_i = self.X[index_i]
+        y_i = self.y[index_i]
+        xtx_minus_i = self._full_xtx - np.outer(x_i, x_i)
+        xty_minus_i = self._full_xty - x_i * y_i
+        return self._posterior_params_from_sufficient_stats(
+            xtx_minus_i,
+            xty_minus_i,
+        )
 
     def loo_log_predictive_density_i(self, index_i):
         """
@@ -256,11 +252,11 @@ class BayesianLinearRegressionTempering:
             pi_{i,lambda}(theta) proportional to
             p(theta | y_{-i})^{1 - lambda} p(theta | y)^lambda
 
-        Therefore
+        Equivalently,
 
             log pi_{i,lambda}(theta)
-            = (1 - lambda) log p(theta | y_{-i})
-              + lambda log p(theta | y)
+            = log p(theta) + sum_{j != i} log p(y_j | theta)
+              + lambda log p(y_i | theta)
 
         The returned value is unnormalized. Constants depending only on lambda
         are ignored, which is enough for MCMC and path sampling.
@@ -277,10 +273,8 @@ class BayesianLinearRegressionTempering:
         if not 0.0 <= lambda_val <= 1.0:
             raise ValueError("lambda_val must be in [0, 1].")
 
-        log_posterior_minus_i = self.log_posterior_minus_i(theta, index_i)
-        log_posterior_full = self.log_posterior_full(theta)
-
         return (
-            (1.0 - lambda_val) * log_posterior_minus_i
-            + lambda_val * log_posterior_full
+            self.log_prior(theta)
+            + self.log_likelihood_full(theta)
+            + (lambda_val - 1.0) * self.log_likelihood_i(theta, index_i)
         )
