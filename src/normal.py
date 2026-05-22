@@ -18,7 +18,7 @@ def tune_km_grid(lambda_grid, lag, sigmaq, log_target_path, nrep=100):
     k_grid = np.zeros(len(lambda_grid))
     meetings_list = []
 
-    for ilambda, lam in enumerate(tqdm(lambda_grid, desc="Lambda grid")):
+    for ilambda, lam in enumerate(tqdm(lambda_grid, desc="mk tunning")):
 
         log_target = lambda x: log_target_path(x, path=lam)
 
@@ -169,6 +169,56 @@ def plot_km_grid(lambda_grid, lag, sigmaq, log_target_path, nrep):
 
     plt.tight_layout()
     plt.show()
+
+def estimate_sqrt_m2(lambda_grid, k_grid, m_grid, nrep, sigmaq, lag, log_target_path, grad_log_target_path):
+    sqrt_m2 = np.zeros(len(lambda_grid))
+    h_list = [lambda x : grad_log_target_path(x)**2]
+    # --- Boucle sur les lambda ---
+    for ilambda, lam in enumerate(tqdm(lambda_grid, desc="estimation sqrt(m2)")):
+
+        # même structure que dans tune_km
+        log_target = lambda x: log_target_path(x, path=lam)
+
+        ri = lambda: initial_distribution(
+            log_target,
+            mean_init=-1,
+            sigma_init=2.0
+        )
+
+        sk = lambda x, f: MH_kernel(
+            x, f,
+            sigma_proposal=sigmaq,
+            log_target=log_target
+        )
+
+        ck = lambda x1, f1, x2, f2: MH_coupled_kernel(
+            x1, f1, x2, f2,
+            sigma_proposal=sigmaq,
+            log_target=log_target
+        )
+
+        # --- Réplications ---
+        uestimators = []
+        for _ in range(nrep):
+            res = unbiased_estimator(
+                sk, ck, ri,
+                h_list,
+                k=int(k_grid[ilambda]),
+                m=int(m_grid[ilambda]),
+                lag=lag
+            )
+            uestimators.append(res)
+
+        # --- Extraction ---
+        mom2_estimators = np.array([
+            x["uestimator"][0] for x in uestimators
+        ])
+
+        sqrt_m2[ilambda] = np.sqrt(np.maximum(np.mean(mom2_estimators), 1e-12))
+
+    return sqrt_m2
+
+
 
 
 
