@@ -117,7 +117,7 @@ def build_budget(L, M, estimator, n_samples_per_bin=10):
         b = (i + 1) / L
         lam = np.random.uniform(a, b, n_samples_per_bin)
         y = np.array([estimator(l) for l in lam])
-        budget_weights[i] = np.var(y) / L
+        budget_weights[i] = np.sqrt(np.var(y)) / L
 
     total_weight = np.sum(budget_weights)
     probs = budget_weights / total_weight
@@ -463,7 +463,28 @@ def compare_mse_budget_grid_plot(
     plt.ylabel("MSE")
     plt.title("Comparaison of MSE")
     plt.grid(True, which="both", alpha=0.4)
+
+    slopes = {}
+    for estimator_name in df_results["estimator"].unique():
+        df_est = df_results[df_results["estimator"] == estimator_name]
+        logM = np.log(df_est["M"].astype(float).values)
+        logmse = np.log(df_est["mse"].astype(float).values)
+        slope, intercept = np.polyfit(logM, logmse, 1)
+        slopes[estimator_name] = slope
+
+    text_y = 0.95
+    for estimator_name, slope in slopes.items():
+        plt.text(
+            0.02,
+            text_y,
+            f"{estimator_name} slope = {slope:.3f}",
+            transform=plt.gca().transAxes,
+            fontsize=10,
+            verticalalignment="top"
+        )
+        text_y -= 0.06
+
     plt.tight_layout()
     plt.show()
 
-    #return df_results
+    return df_results, slopes
