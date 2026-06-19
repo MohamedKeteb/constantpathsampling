@@ -305,7 +305,7 @@ def plot_estimators_box_CI(
             "axes.linewidth": 0.8,
             "grid.color": "#D9D9D9",
             "grid.linewidth": 0.8,
-            "font.size": 11,
+            "font.size": 20,
             "axes.labelsize": 12,
             "axes.titlesize": 13,
             "legend.fontsize": 10,
@@ -316,20 +316,40 @@ def plot_estimators_box_CI(
 
     fig, axes = plt.subplots(1, 2, figsize=figsize, dpi=150)
 
-    axes[0].boxplot(
+    # Draw boxplots and return the artists so we can style individual boxes
+    bplot = axes[0].boxplot(
         samples,
         tick_labels=labels,
         patch_artist=True,
         boxprops=dict(facecolor="#DCEAF4", edgecolor="#4D4D4D"),
-        medianprops=dict(color="#D55E00", linewidth=2),
+        medianprops=dict(color="#000000", linewidth=2),
         whiskerprops=dict(color="#4D4D4D"),
         capprops=dict(color="#4D4D4D"),
         flierprops=dict(markerfacecolor="#0072B2", markeredgecolor="#0072B2", markersize=4, alpha=0.6),
     )
-    axes[0].set_title("Distribution of the estimators")
+
+    # Coloration personnalisée: premier boxplot rouge, second bleu (si présents)
+    default_colors = ["#0072B2", "#D55E00"]
+    for i, patch in enumerate(bplot["boxes"]):
+        color = default_colors[i] if i < len(default_colors) else "#DCEAF4"
+        patch.set_facecolor(color)
+        patch.set_edgecolor("#4D4D4D")
+
+    axes[0].set_title("")
     axes[0].set_ylabel("Estimate")
     axes[0].grid(True, axis="y")
     axes[0].grid(False, axis="x")
+
+    # Supprimer les labels 'IS' / 'Stratified' sous les boxplots (laisser les boîtes colorées)
+    axes[0].set_xticklabels(["" for _ in labels])
+
+    # Ajouter une légende explicative des couleurs des boxplots (fontsize large pour visibilité)
+    import matplotlib.patches as mpatches
+    handles = []
+    for i, lbl in enumerate(labels):
+        color = default_colors[i] if i < len(default_colors) else "#DCEAF4"
+        handles.append(mpatches.Patch(facecolor=color, edgecolor="#4D4D4D", label=lbl))
+    axes[0].legend(handles=handles, fontsize=20, loc="upper right")
 
     x = np.arange(len(labels))
     means = np.array(means)
@@ -396,7 +416,7 @@ def compare_mse_budget_grid_plot(
 
     rows = []
 
-    for M in M_grid:
+    for M in tqdm(M_grid):
         budget = build_budget(
             L=L,
             M=M,
@@ -426,7 +446,7 @@ def compare_mse_budget_grid_plot(
 
         rows.append({
             "M": M,
-            "estimator": "IS",
+            "estimator": "UPS",
             "mse": mse_q,
             #"mean": np.mean(estimates_q),
             #"variance": np.var(estimates_q, ddof=1),
@@ -435,7 +455,7 @@ def compare_mse_budget_grid_plot(
 
         rows.append({
             "M": M,
-            "estimator": "Stratified sampling",
+            "estimator": "SPS",
             "mse": mse_opt,
             #"mean": np.mean(estimates_opt),
             #"variance": np.var(estimates_opt, ddof=1),
