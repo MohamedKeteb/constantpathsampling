@@ -6,9 +6,9 @@ def coupled_chain(kernel, coupled_kernel, initial, k, lag, max_iterations = np.i
     init2 = initial()
     current_state1, current_pdf1 = init1
     current_state2, current_pdf2 = init2
-    p = 1 
-    samples1 = np.full((k + preallocate + lag, p), np.nan)
-    samples2 = np.full((k + preallocate, p), np.nan) 
+    d = current_state1.shape[0]
+    samples1 = np.full((k + preallocate + lag, d), np.nan)
+    samples2 = np.full((k + preallocate, d), np.nan) 
 
     nrowsamples1 = k + preallocate + lag
     
@@ -45,8 +45,8 @@ def coupled_chain(kernel, coupled_kernel, initial, k, lag, max_iterations = np.i
                 
         if current_nsamples1 >= nrowsamples1:
             
-            samples1 = np.vstack((samples1,np.full((nrowsamples1, p), np.nan)))
-            samples2 = np.vstack((samples2,np.full((nrowsamples1, p), np.nan)))
+            samples1 = np.vstack((samples1,np.full((nrowsamples1, d), np.nan)))
+            samples2 = np.vstack((samples2,np.full((nrowsamples1, d), np.nan)))
             nrowsamples1 = 2*nrowsamples1
 
         samples1[current_nsamples1, :] = current_state1
@@ -86,10 +86,7 @@ def H_bar(c_chain, h_list, k, m, lag):
 
     for i, h in enumerate(h_list):
         h_of_chain = np.array([h(x) for x in samples1[k:m+1, :]])
-        #print(f"h_of_chain: {h_of_chain}, i: {i}")
         
-        # ensure 2D
-        #h_of_chain = np.atleast_2d(h_of_chain)
         h_of_chain = np.squeeze(h_of_chain) 
 
 

@@ -243,7 +243,7 @@ class BayesianLinearRegressionTempering:
             self.loo_log_predictive_density_i(i)
             for i in range(len(self.y))
         ])
-        return loo_values, np.sum(loo_values)
+        return loo_values, np.mean(loo_values)
 
     def log_path(self, theta, lambda_val, index_i):
         """

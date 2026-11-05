@@ -446,7 +446,7 @@ def compare_mse_budget_grid_plot(
 
         rows.append({
             "M": M,
-            "estimator": "UPS",
+            "estimator": "IPS",
             "mse": mse_q,
             #"mean": np.mean(estimates_q),
             #"variance": np.var(estimates_q, ddof=1),
