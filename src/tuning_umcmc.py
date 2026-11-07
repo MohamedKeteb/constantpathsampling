@@ -12,12 +12,6 @@ from src.umcmc_estimator import *
 # Tuning of the parametrs k and m of Unbiased MCMC estimatiors for a given grid
 
 
-import jax
-import jax.numpy as jnp
-import numpy as np
-import pandas as pd
-from jax import random
-from tqdm import tqdm
 
 
 def tune_km_grid(
@@ -61,8 +55,7 @@ def tune_km_grid(
             return tau
 
         # Generate independent keys
-        key, subkey = random.split(key)
-        keys = random.split(subkey, nrep)
+        keys = random.split(key, nrep)
 
         meetings = jnp.stack([one_replication(rep_key) for rep_key in keys])
 
@@ -103,8 +96,7 @@ def tune_km_grid(
         "k_grid": k_grid,
         "m_grid": m_grid,
         "meetings_df": meetings_df,
-        "meantau": meantau,
-        "key": key
+        "meantau": meantau
     }
 
 
@@ -112,14 +104,13 @@ def tune_km_grid(
 
 # One can visualize the tuning witht the following function
 
-def plot_km_grid(key, lambda_grid, Sigma, mean_init, Sigma_init, log_target_path):
+# results = tune_km_grid(key, lambda_grid, Sigma, mean_init, Sigma_init, log_target_path, lag=1, nrep=100)
 
-    results = tune_km_grid(key, lambda_grid, Sigma, mean_init, Sigma_init, log_target_path, lag=1, nrep=100)
+def plot_km_grid(results, lambda_grid):
 
     k_grid = np.asarray(jax.device_get(results["k_grid"]))
     m_grid = np.asarray(jax.device_get(results["m_grid"]))
     meetings_df = results["meetings_df"]
-    key = results["key"]
 
     lambda_np = np.asarray(lambda_grid)
 
@@ -176,7 +167,156 @@ def plot_km_grid(key, lambda_grid, Sigma, mean_init, Sigma_init, log_target_path
     plt.tight_layout()
     plt.show()
 
-    return key, results
+
+
+
+def estimate_moments(key,
+    lambda_grid,
+    k_grid,
+    m_grid,
+    Sigma,
+    mean_init,
+    Sigma_init, 
+    log_target_path,
+    grad_log_target_path,
+    lag=1,
+    nrep=20):
+
+    n_lambda = len(lambda_grid)
+
+    m1 = jnp.zeros(n_lambda)
+    m2 = jnp.zeros(n_lambda)
+    var = jnp.zeros(n_lambda)
+
+    for ilambda, lam in enumerate(
+        tqdm(lambda_grid, desc="estimating moments")
+    ):
+
+        log_target = lambda x: log_target_path(x, path=lam)
+
+        h_list = [
+            lambda x: grad_log_target_path(x, path =lam),
+            lambda x: grad_log_target_path(x, path=lam)**2
+        ]
+
+        def ri(rep_key):
+            return initial_distribution(
+                rep_key, log_target, mean_init, Sigma_init
+            )
+
+        def sk(rep_key, x, f):
+            return MH_kernel(rep_key, x, f, Sigma, log_target)
+
+        def ck(rep_key, x1, f1, x2, f2):
+            return MH_coupled_kernel(
+                rep_key, x1, f1, x2, f2, Sigma, log_target
+            )
+
+        def one_replication(rep_key):
+            res = unbiased_estimator(
+                rep_key, sk, ck, ri,
+                h_list,
+                k=int(k_grid[ilambda]),
+                m=int(m_grid[ilambda]),
+                lag=lag
+            )
+
+            return res["uestimator"][0], res["uestimator"][1]
+
+        # The meeting-time loop is data-dependent, so keep chain execution eager.
+    
+        keys = random.split(key, nrep)
+        estimates = [one_replication(rep_key) for rep_key in keys]
+        estimators_m1 = jnp.stack([estimate[0] for estimate in estimates])
+        estimators_m2 = jnp.stack([estimate[1] for estimate in estimates])
+
+        # Monte Carlo estimates
+        m1_lambda = jnp.mean(estimators_m1)
+        m2_lambda = jnp.mean(estimators_m2)
+
+        var_lambda = m2_lambda - m1_lambda**2
+
+        m1 = m1.at[ilambda].set(m1_lambda)
+        m2 = m2.at[ilambda].set(m2_lambda)
+        var = var.at[ilambda].set(var_lambda)
+
+    return {
+        "m1": m1,
+        "m2": m2,
+        "var": var
+    }
+
+
+def plot_m2_var(results, lambda_grid):
+
+    lambda_grid = np.asarray(lambda_grid)
+    m2 = np.asarray(jax.device_get(results["m2"]))
+    var = np.asarray(jax.device_get(results["var"]))
+
+    df = pd.DataFrame({
+        r"$\lambda$": lambda_grid,
+        r"$m_2(\lambda)$": m2,
+        r"$\mathrm{Var}(\widehat I_\lambda)$": var
+    })
+
+    df_long = df.melt(
+        id_vars=r"$\lambda$",
+        var_name="Quantity",
+        value_name="Value"
+    )
+
+    sns.set_theme(style="whitegrid", context="paper")
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4), dpi=150)
+
+    sns.lineplot(
+        data=df,
+        x=r"$\lambda$",
+        y=r"$m_2(\lambda)$",
+        marker="o",
+        linewidth=2,
+        color="#0072B2",
+        ax=axes[0]
+    )
+
+    axes[0].set_title(r"Second moment $m_2(\lambda)$")
+    axes[0].set_xlabel(r"$\lambda$")
+    axes[0].set_ylabel(r"$m_2(\lambda)$")
+
+    sns.lineplot(
+        data=df,
+        x=r"$\lambda$",
+        y=r"$\mathrm{Var}(\widehat I_\lambda)$",
+        marker="o",
+        linewidth=2,
+        color="#D55E00",
+        ax=axes[1]
+    )
+
+    axes[1].set_title(r"Variance of $\widehat I_\lambda$")
+    axes[1].set_xlabel(r"$\lambda$")
+    axes[1].set_ylabel(r"$\mathrm{Var}(\widehat I_\lambda)$")
+
+    for ax in axes:
+        ax.grid(True, alpha=0.3)
+        sns.despine(ax=ax)
+
+    plt.tight_layout()
+    plt.show()
+
+    return df
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -185,8 +325,7 @@ def plot_km_grid(key, lambda_grid, Sigma, mean_init, Sigma_init, log_target_path
 
 #  we can tune the initialisation idstribution by computing the unbiased estimator of the mean and the covaraince
 
-
-def estimate_mom(
+def tune_initial_distribution(
     lambda_grid,
     k_grid,
     m_grid,
@@ -197,7 +336,6 @@ def estimate_mom(
     lag=1,
     key=None
 ):
-
     if key is None:
         key = jax.random.PRNGKey(0)
 
@@ -256,8 +394,4 @@ def estimate_mom(
         "covariance": covariance,
         "key": key
     }
-
-
-
-
 

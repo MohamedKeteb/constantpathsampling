@@ -1,4 +1,5 @@
 # Here we implement the UPS estimator for a given path or ditribution
+
 import jax
 import jax.numpy as jnp
 import jax.random as random
@@ -9,65 +10,114 @@ from src.tuning_umcmc import *
 
 
 
-# Given the tuned parametes k, m, lags and the log_target_path we estimate the the second moment 
+# Given the tuned parametes k, m, lags and the log_target_path we estimate the the second moment with estimate_moment 
+
+# Now we implement E(lambda)
 
 
-def sqrt_m2(
-    lambda_grid,
-    k_grid,
-    m_grid,
-    Sigma,
-    mean_init,
-    Sigma_init,
-    log_target_path,
-    lag=1,
-    nrep=10,
-    key=None
-):
+def E_lambda(key, lam, lambda_grid, k_grid, m_grid, lag, mean_init, Sigma_init, Sigma, log_target_path, grad_log_target_path):
 
-    if key is None:
-        key = jax.random.PRNGKey(0)
+    # --- find the nearest lambda to the grid ---
 
-    n_lambda = len(lambda_grid)
-    sqrt_m2 = jnp.zeros(n_lambda)
+    index_lambda = jnp.argmin(jnp.abs(lambda_grid - lam))
 
-    for ilambda, lam in enumerate(tqdm(lambda_grid, desc="Estimation sqrt(m2)")):
 
-        log_target = lambda x: log_target_path(x, path=lam)
-        h_list = [lambda x: log_target_path(x, path=lam)]
 
-        def ri(key):
-            return initial_distribution(key, log_target, mean_init, Sigma_init)
+    k_lam = int(k_grid[index_lambda])
+    m_lam = int(m_grid[index_lambda])
+    lag_lam = int(lag[index_lambda])
 
-        def sk(key, x, f):
-            return MH_kernel(key, x, f, Sigma, log_target)
+    # --- log_target spécifique ---
+    log_target = lambda x: log_target_path(x, path=lam)
+    grad_log_target = lambda x: grad_log_target_path(x, path=lam)
 
-        def ck(key, x1, f1, x2, f2):
-            return MH_coupled_kernel(key, x1, f1, x2, f2, Sigma, log_target)
+    # --- initialisation ---
+    def ri(key): 
+        return initial_distribution(key, log_target, mean_init, Sigma_init)
+    
+    def sk(key, x, f): 
+        return MH_kernel(key, x, f, Sigma, log_target)
+    
+    def ck(key, x1, f1, x2, f2):
+        return MH_coupled_kernel(key, x1, f1, x2, f2, Sigma, log_target)
+    
 
-        def one_replication(key):
-            res = unbiased_estimator(
-                key, sk, ck, ri,
-                h_list,
-                k=int(k_grid[ilambda]),
-                m=int(m_grid[ilambda]),
-                lag=lag
-            )
+    # --- appel estimateur ---
+    umcmc_estimator = unbiased_estimator(
+        key, sk, ck, ri,
+        h=[lambda x: grad_log_target(x)],
+        k=k_lam,
+        m=m_lam,
+        lag=lag_lam
+    )
 
-            return res["uestimator"][0]
+    return umcmc_estimator["uestimator"][0]
 
-        # Generate independent random keys
-        key, subkey = jax.random.split(key)
-        keys = jax.random.split(subkey, nrep)
 
-        estimators = jnp.stack([one_replication(rep_key) for rep_key in keys])
 
-        # Estimate sqrt(E[I_lambda^2])
-        sqrt_m2_lambda = jnp.sqrt(jnp.mean(estimators**2))
-        sqrt_m2 = sqrt_m2.at[ilambda].set(sqrt_m2_lambda)
+# Having the estimates sqrt_m2 one can construct the approximation of the optimal proposal distribution
 
-    return sqrt_m2
 
+
+@jax.jit
+def optimal_q(key, lambda_grid, m2):
+
+    sqrt_m2 = jnp.sqrt(jnp.maximum(m2, 0.0))
+
+    # Trapezoidal approximation
+    widths = jnp.diff(lambda_grid)
+    heights = 0.5 * (sqrt_m2[:-1] + sqrt_m2[1:])
+
+    weights = widths * heights
+    weights = weights / jnp.sum(weights)
+
+    # CDF
+    cdf = jnp.cumsum(weights)
+
+    # Sample U and V
+    key1, key2 = jax.random.split(key)
+
+    u = jax.random.uniform(key1)
+    v = jax.random.uniform(key2)
+
+    # Binary search
+    i = jnp.searchsorted(cdf, u, side="right")
+    i = jnp.minimum(i, lambda_grid.shape[0] - 2)
+
+    # Sample lambda inside interval
+    lam = lambda_grid[i] + v * widths[i]
+
+    # Piecewise constant density
+    q_lam = weights[i] / widths[i]
+
+    return lam, q_lam
+
+# We implement the UPS estimator as follows:
+
+def UPS_estimator(key, lambda_grid, m2, k_grid, m_grid, lag, mean_init, Sigma_init, Sigma, log_target_path, grad_log_target_path, M):
+
+    key1, key2 = jax.random.split(key)
+
+    subkeys_q = jax.random.split(key1, M)
+    subkeys_E = jax.random.split(key2, M)
+
+    # Sample lambda ~ q
+    lambdas, q_lambdas = jax.vmap(optimal_q, in_axes=(0, None, None))(subkeys_q, lambda_grid, m2)
+
+    # Coupled-chain simulation uses Python control flow and callable targets.
+    E_lambda_estimates = jnp.stack([
+        E_lambda(
+            subkey, lam, lambda_grid, k_grid, m_grid, lag,
+            mean_init, Sigma_init, Sigma, log_target_path,
+            grad_log_target_path
+        )
+        for subkey, lam in zip(subkeys_E, lambdas)
+    ])
+
+    # Importance sampling
+    estimates = E_lambda_estimates / q_lambdas
+
+    return jnp.mean(estimates)
 
 
 
