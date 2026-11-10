@@ -7,6 +7,8 @@ from .umcmc_estimator import *
 from .RWMH_coupling import *
 from .UPS_estimator import *
 from .SUPS_estimator import *
+from .IS_estimator import *
+
 
 
 

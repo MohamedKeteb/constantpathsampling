@@ -153,7 +153,7 @@ def SUPS_estimator(key, lambda_grid, budget, k_grid, m_grid, lag, mean_init, Sig
 
     for ell in range(L):
 
-        M_ell = budget[ell]
+        M_ell = int(budget[ell])
 
         # Uniform sampling inside bin
         lambdas = random.uniform(keys[ell], shape=(M_ell,), minval=lambda_grid[ell], maxval=lambda_grid[ell + 1])
