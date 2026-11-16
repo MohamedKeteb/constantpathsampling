@@ -8,7 +8,7 @@ from matplotlib.patches import Patch
 
 from src.IS_estimator import IS_estimator
 from src.SUPS_estimator import SUPS_estimator, estimate_sigma, neyman_allocation
-from src.UPS_estimator import UPS_estimator
+from src.UPS_estimator import UPS_estimator, E_lambda, optimal_q
 from src.tuning_umcmc import estimate_moments, tune_km_grid
 
 
@@ -30,6 +30,148 @@ def _g_log_target(x, path, D):
 @jax.jit
 def _g_grad_log_target(x, D):
 	return _log_target1(x, D) - _log_target0(x)
+
+
+def plot_ups_integrand_and_proposal(
+	key,
+	dimension,
+	lambda_grid,
+	alpha=10,
+	n_rep_gridpoint=10,
+	n_rep_tuning=20,
+	n_rep_moments=20,
+	n_proposal_samples=10000,
+):
+	"""Plot the averaged E(lambda) / q(lambda) and UPS proposal density."""
+
+	n_proposal_samples = int(n_proposal_samples)
+	lambda_grid = jnp.asarray(lambda_grid)
+	
+
+	key_tuning, key_moments, key_estimates = jax.random.split(key, 3)
+	Sigma = jnp.eye(dimension)
+	mean_init = -jnp.ones(dimension)
+	Sigma_init = jnp.eye(dimension)
+	D = alpha * jnp.ones(dimension)
+	log_target_path = lambda x, path: _g_log_target(x, path, D)
+	grad_log_target_path = lambda x, path: _g_grad_log_target(x, D)
+
+	tuning = tune_km_grid(
+		key_tuning,
+		lambda_grid,
+		Sigma,
+		mean_init,
+		Sigma_init,
+		log_target_path,
+		lag=1,
+		nrep=n_rep_tuning,
+	)
+	k_grid = tuning["k_grid"]
+	m_grid = tuning["m_grid"]
+	lag = k_grid
+	moment_results = estimate_moments(
+		key_moments,
+		lambda_grid,
+		k_grid,
+		m_grid,
+		Sigma,
+		mean_init,
+		Sigma_init,
+		log_target_path,
+		grad_log_target_path,
+		lag=1,
+		nrep=n_rep_moments,
+	)
+	m2 = moment_results["m2"]
+
+	widths = jnp.diff(lambda_grid)
+	sqrt_m2 = jnp.sqrt(jnp.maximum(m2, 0.0))
+	interval_weights = widths * 0.5 * (sqrt_m2[:-1] + sqrt_m2[1:])
+	weight_sum = jnp.sum(interval_weights)
+	if not bool(jax.device_get(jnp.isfinite(weight_sum) & (weight_sum > 0))):
+		raise ValueError("m2 must define a finite, nonzero proposal density.")
+	interval_weights = interval_weights / weight_sum
+	proposal_density = interval_weights / widths
+
+	replication_keys = jax.random.split(
+		key_estimates, lambda_grid.shape[0] * n_rep_gridpoint
+	)
+	integrand_estimates = []
+	for grid_index, lam in enumerate(lambda_grid):
+		start = grid_index * n_rep_gridpoint
+		grid_keys = replication_keys[start : start + n_rep_gridpoint]
+		grid_estimates = [
+			E_lambda(
+				rep_key,
+				lam,
+				lambda_grid,
+				k_grid,
+				m_grid,
+				lag,
+				mean_init,
+				Sigma_init,
+				Sigma,
+				log_target_path,
+				grad_log_target_path,
+			)
+			for rep_key in grid_keys
+		]
+		mean_e_lambda = jnp.mean(jnp.stack(grid_estimates))
+		# At the final grid point, use the density of the final interval.
+		interval_index = min(grid_index, lambda_grid.shape[0] - 2)
+		integrand_estimates.append(
+			mean_e_lambda / proposal_density[interval_index]
+		)
+
+	integrand_estimates = jnp.stack(integrand_estimates)
+	proposal_keys = jax.random.split(key_estimates, n_proposal_samples)
+	proposal_samples, _ = jax.vmap(
+		lambda proposal_key: optimal_q(proposal_key, lambda_grid, m2)
+	)(proposal_keys)
+	lambda_values = np.asarray(jax.device_get(lambda_grid))
+	fig, ax = plt.subplots(figsize=(7, 4.5))
+	proposal_ax = ax.twinx()
+	ax.plot(
+		lambda_values,
+		jax.device_get(integrand_estimates),
+		marker="o",
+		linewidth=2,
+		color="#0072B2",
+		label=r"$E(\lambda)/q(\lambda)$",
+	)
+	proposal_ax.hist(
+		jax.device_get(proposal_samples),
+		bins=lambda_values,
+		density=True,
+		color="#D55E00",
+		alpha=0.45,
+		edgecolor="white",
+		label=r"Samples from $q(\lambda)$",
+	)
+	ax.set(
+		title=f"Integrand and proposal density (d={dimension}, alpha={alpha})",
+		xlabel=r"$\lambda$",
+		ylabel=r"$E(\lambda)/q(\lambda)$",
+	)
+	proposal_ax.set_ylabel(r"Proposal density $q(\lambda)$", color="#D55E00")
+	proposal_ax.tick_params(axis="y", labelcolor="#D55E00")
+	handles, labels = ax.get_legend_handles_labels()
+	proposal_handles, proposal_labels = proposal_ax.get_legend_handles_labels()
+	ax.legend(handles + proposal_handles, labels + proposal_labels)
+	sns.despine(ax=ax)
+	fig.tight_layout()
+	plt.show()
+
+	return {
+		"lambda_grid": lambda_values,
+		"integrand_estimates": np.asarray(jax.device_get(integrand_estimates)),
+		"proposal_density": np.asarray(jax.device_get(proposal_density)),
+		"proposal_samples": np.asarray(jax.device_get(proposal_samples)),
+		"m2": np.asarray(jax.device_get(m2)),
+		"figure": fig,
+		"axes": ax,
+		"proposal_axes": proposal_ax,
+	}
 
 
 def inefficiency_plot(
