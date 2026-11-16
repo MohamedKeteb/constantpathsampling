@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from tqdm import tqdm
+from matplotlib.patches import Patch
 
 from src.IS_estimator import IS_estimator
 from src.SUPS_estimator import SUPS_estimator, estimate_sigma, neyman_allocation
@@ -304,14 +305,16 @@ def inefficiency_vs_alpha(
 		proposal = lambda sample_key: jax.random.normal(
 			sample_key, shape=(dimension,)
 		)
+
 		log_weight = lambda x: _log_target1(x, D) - _log_target0(x)
-		key_mcmc, key_is = jax.random.split(key_simulation)
+		key_allocation, key_mcmc, key_is = jax.random.split(key_simulation, 3)
+		budget = neyman_allocation(key_allocation, lambda_grid, sigma, M)
 		replication_keys = jax.random.split(key_mcmc, n_rep_mcmc)
+
 		ups_estimates = []
 		sups_estimates = []
 		for rep_key in replication_keys:
-			key_ups, key_allocation, key_sups = jax.random.split(rep_key, 3)
-			budget = neyman_allocation(key_allocation, lambda_grid, sigma, M)
+			key_ups, key_sups = jax.random.split(rep_key, 2)
 			ups_estimates.append(
 				float(
 					jax.device_get(
@@ -397,8 +400,8 @@ def inefficiency_vs_alpha(
 		)
 	ax.set(
 		title=f"Estimator inefficiency versus alpha (d={dimension}, M={M})",
-		xlabel=r"Mean shift $\\alpha$",
-		ylabel=r"$M \\times \\mathrm{MSE}$",
+		xlabel=r"Mean shift $\alpha$",
+		ylabel=r"$M \times \mathrm{MSE}$",
 	)
 	ax.legend(title="Estimator")
 	sns.despine(ax=ax)
@@ -410,6 +413,185 @@ def inefficiency_vs_alpha(
 		"dimension": dimension,
 		"M": M,
 		"results_by_estimator": results,
+		"figure": fig,
+		"axes": ax,
+	}
+
+
+def plot_estimator_boxplot(
+	key,
+	dimension,
+	M,
+	lambda_grid,
+	alpha=10,
+	n_rep_mcmc=20,
+	n_rep_is=20,
+	n_rep_tuning=20,
+	n_rep_moments=10,
+	n_pilot=10,
+	true_value=0.0,
+):
+	"""Plot UPS, SUPS, and IS estimate distributions for one setup."""
+
+	if n_rep_mcmc < 1 or n_rep_is < 1:
+		raise ValueError("Replication counts must be at least 1.")
+
+	lambda_grid = jnp.asarray(lambda_grid)
+	(
+		key_tuning,
+		key_moments,
+		key_sigma,
+		key_allocation,
+		key_ups,
+		key_sups,
+		key_is,
+	) = jax.random.split(key, 7)
+
+	Sigma = jnp.eye(dimension)
+	mean_init = -jnp.ones(dimension)
+	Sigma_init = jnp.eye(dimension)
+	D = alpha * jnp.ones(dimension)
+	log_target_path = lambda x, path: _g_log_target(x, path, D)
+	grad_log_target_path = lambda x, path: _g_grad_log_target(x, D)
+
+	tuning = tune_km_grid(
+		key_tuning,
+		lambda_grid,
+		Sigma,
+		mean_init,
+		Sigma_init,
+		log_target_path,
+		lag=1,
+		nrep=n_rep_tuning,
+	)
+	k_grid = tuning["k_grid"]
+	m_grid = tuning["m_grid"]
+	lag = k_grid
+	moment_results = estimate_moments(
+		key_moments,
+		lambda_grid,
+		k_grid,
+		m_grid,
+		Sigma,
+		mean_init,
+		Sigma_init,
+		log_target_path,
+		grad_log_target_path,
+		lag=1,
+		nrep=n_rep_moments,
+	)
+	m2 = moment_results["m2"]
+	sigma = estimate_sigma(
+		key_sigma,
+		lambda_grid,
+		k_grid,
+		m_grid,
+		lag,
+		mean_init,
+		Sigma_init,
+		Sigma,
+		log_target_path,
+		grad_log_target_path,
+		n_pilot,
+	)
+	budget = neyman_allocation(key_allocation, lambda_grid, sigma, M)
+
+	ups_keys = jax.random.split(key_ups, n_rep_mcmc)
+	sups_keys = jax.random.split(key_sups, n_rep_mcmc)
+	ups_estimates = [
+		float(
+			jax.device_get(
+				UPS_estimator(
+					rep_key,
+					lambda_grid,
+					m2,
+					k_grid,
+					m_grid,
+					lag,
+					mean_init,
+					Sigma_init,
+					Sigma,
+					log_target_path,
+					grad_log_target_path,
+					M=M,
+				)
+			)
+		)
+		for rep_key in ups_keys
+	]
+	sups_estimates = [
+		float(
+			jax.device_get(
+				SUPS_estimator(
+					rep_key,
+					lambda_grid,
+					budget,
+					k_grid,
+					m_grid,
+					lag,
+					mean_init,
+					Sigma_init,
+					Sigma,
+					log_target_path,
+					grad_log_target_path,
+				)
+			)
+		)
+		for rep_key in sups_keys
+	]
+	proposal = lambda sample_key: jax.random.normal(
+		sample_key, shape=(dimension,)
+	)
+	log_weight = lambda x: _log_target1(x, D) - _log_target0(x)
+	is_keys = jax.random.split(key_is, n_rep_is)
+	is_estimates = jax.vmap(
+		lambda rep_key: IS_estimator(
+			rep_key, log_weight, proposal, M
+		)
+	)(is_keys)
+
+	estimates = {
+		"UPS": np.asarray(ups_estimates),
+		"SUPS": np.asarray(sups_estimates),
+		"IS": np.asarray(jax.device_get(is_estimates)),
+	}
+	sns.set_theme(style="whitegrid", context="notebook")
+	fig, ax = plt.subplots(figsize=(7, 4.5))
+	boxplot = ax.boxplot(
+		list(estimates.values()),
+		patch_artist=True,
+		showmeans=True,
+	)
+	for patch, color in zip(
+		boxplot["boxes"], ("#0072B2", "#D55E00", "#009E73")
+	):
+		patch.set_facecolor(color)
+		patch.set_alpha(0.65)
+	ax.set_xticks([1, 2, 3], labels=list(estimates))
+	true_value_line = ax.axhline(
+		true_value,
+		color="0.35",
+		linestyle="--",
+		linewidth=1.2,
+		label="True value",
+	)
+	ax.set(
+		title=f"Estimator distributions (d={dimension}, M={M}, alpha={alpha})",
+		ylabel="Estimate of log(Z1 / Z0)",
+	)
+	legend_handles = [
+		Patch(facecolor=color, alpha=0.65, label=label)
+		for label, color in zip(
+			("UPS", "SUPS", "IS"), ("#0072B2", "#D55E00", "#009E73")
+		)
+	]
+	ax.legend(handles=legend_handles + [true_value_line])
+	sns.despine(ax=ax)
+	fig.tight_layout()
+	plt.show()
+
+	return {
+		"estimates_by_estimator": estimates,
 		"figure": fig,
 		"axes": ax,
 	}
