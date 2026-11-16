@@ -104,7 +104,6 @@ def UPS_estimator(key, lambda_grid, m2, k_grid, m_grid, lag, mean_init, Sigma_in
     # Sample lambda ~ q
     lambdas, q_lambdas = jax.vmap(optimal_q, in_axes=(0, None, None))(subkeys_q, lambda_grid, m2)
 
-    # Coupled-chain simulation uses Python control flow and callable targets.
     E_lambda_estimates = jnp.stack([
         E_lambda(
             subkey, lam, lambda_grid, k_grid, m_grid, lag,

@@ -96,6 +96,7 @@ def multinomial_sample(key, n, p):
 
 
 
+@jax.jit
 def neyman_allocation(key, lambda_grid, sigma, M):
 
     # Number of bins
