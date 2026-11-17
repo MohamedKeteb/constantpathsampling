@@ -137,7 +137,7 @@ def plot_ups_integrand_and_proposal(
 		marker="o",
 		linewidth=2,
 		color="#0072B2",
-		label=r"$E(\lambda)/q(\lambda)$",
+		label=r"$E(\lambda)/\nu(\lambda)$",
 	)
 	proposal_ax.hist(
 		jax.device_get(proposal_samples),
@@ -146,14 +146,13 @@ def plot_ups_integrand_and_proposal(
 		color="#D55E00",
 		alpha=0.45,
 		edgecolor="white",
-		label=r"Samples from $q(\lambda)$",
+		label=r"$\nu(\lambda)$",
 	)
 	ax.set(
-		title=f"Integrand and proposal density (d={dimension}, alpha={alpha})",
 		xlabel=r"$\lambda$",
-		ylabel=r"$E(\lambda)/q(\lambda)$",
+		ylabel=r"$E(\lambda)/\nu(\lambda)$",
 	)
-	proposal_ax.set_ylabel(r"Proposal density $q(\lambda)$", color="#D55E00")
+	proposal_ax.set_ylabel(r"Proposal density $\nu(\lambda)$", color="#D55E00")
 	proposal_ax.tick_params(axis="y", labelcolor="#D55E00")
 	handles, labels = ax.get_legend_handles_labels()
 	proposal_handles, proposal_labels = proposal_ax.get_legend_handles_labels()
@@ -575,9 +574,6 @@ def plot_estimator_boxplot(
 ):
 	"""Plot UPS, SUPS, and IS estimate distributions for one setup."""
 
-	if n_rep_mcmc < 1 or n_rep_is < 1:
-		raise ValueError("Replication counts must be at least 1.")
-
 	lambda_grid = jnp.asarray(lambda_grid)
 	(
 		key_tuning,
@@ -688,7 +684,7 @@ def plot_estimator_boxplot(
 	is_keys = jax.random.split(key_is, n_rep_is)
 	is_estimates = jax.vmap(
 		lambda rep_key: IS_estimator(
-			rep_key, log_weight, proposal, M
+			rep_key, log_weight, proposal, M = 1000
 		)
 	)(is_keys)
 
@@ -718,7 +714,6 @@ def plot_estimator_boxplot(
 		label="True value",
 	)
 	ax.set(
-		title=f"Estimator distributions (d={dimension}, M={M}, alpha={alpha})",
 		ylabel="Estimate of log(Z1 / Z0)",
 	)
 	legend_handles = [
