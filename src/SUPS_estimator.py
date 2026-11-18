@@ -13,7 +13,7 @@ from src.UPS_estimator import *
 
 ## We begin by estimating the variance of E_lambda within each bin as follows: 
 
-def estimate_sigma(key, lambda_grid, k_grid, m_grid, lag, mean_init, Sigma_init, Sigma, log_target_path, grad_log_target_path, N_pilot):
+def estimate_sigma(key, lambda_grid, k_grid, m_grid, lag, mean_init, Sigma_init, Sigma, cholesky_sigma,log_target_path, grad_log_target_path, N_pilot):
 
     L = lambda_grid.shape[0] - 1
 
@@ -39,9 +39,9 @@ def estimate_sigma(key, lambda_grid, k_grid, m_grid, lag, mean_init, Sigma_init,
                 subkeys_E[j],
                 lambdas[j],
                 lambda_grid, k_grid, m_grid, lag,
-                mean_init, Sigma_init, Sigma,
+                mean_init, Sigma_init, Sigma, cholesky_sigma,
                 log_target_path, grad_log_target_path
-            )
+            )[0]
             for j in range(N_pilot)
         ])
 
@@ -151,6 +151,7 @@ def SUPS_estimator(key, lambda_grid, budget, k_grid, m_grid, lag, mean_init, Sig
     keys = random.split(key, L)
 
     estimates_per_bin = []
+    costs_per_bin = []
 
     for ell in range(L):
 
@@ -161,7 +162,7 @@ def SUPS_estimator(key, lambda_grid, budget, k_grid, m_grid, lag, mean_init, Sig
 
         subkeys_E = random.split(random.fold_in(keys[ell], 1), M_ell)
 
-        E_values = jnp.stack([
+        E_lambda_results = [
             E_lambda(
                 subkeys_E[j],
                 lambdas[j],
@@ -170,12 +171,18 @@ def SUPS_estimator(key, lambda_grid, budget, k_grid, m_grid, lag, mean_init, Sig
                 log_target_path, grad_log_target_path
             )
             for j in range(M_ell)
-        ])
+        ]
+        E_values = jnp.stack([result[0] for result in E_lambda_results])
+        costs_per_bin.append(
+            jnp.sum(jnp.stack([result[1] for result in E_lambda_results]))
+        )
 
         # Monte Carlo contribution
         bin_estimate = widths[ell] * jnp.mean(E_values)
 
         estimates_per_bin.append(bin_estimate)
 
-    return jnp.sum(jnp.stack(estimates_per_bin))
+    estimate = jnp.sum(jnp.stack(estimates_per_bin))
+    total_cost = jnp.sum(jnp.stack(costs_per_bin))
+    return estimate, total_cost
 

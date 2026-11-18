@@ -2,7 +2,6 @@
 import jax
 import jax.numpy as jnp
 import jax.random as random
-import math
 from tqdm import tqdm
 
 # Definition of the lag coupling as in Biswas et al. (2018) and Jacob et al. (2020)
@@ -20,15 +19,8 @@ def coupled_chain(key, kernel, coupled_kernel, initial, k, lag, max_iterations=f
     current_state1 = jnp.asarray(current_state1)
     current_state2 = jnp.asarray(current_state2)
 
-    d = current_state1.size
-
-    # Initial storage
-    nrowsamples1 = k + preallocate + lag
-    samples1 = jnp.full((nrowsamples1, d), jnp.nan)
-    samples2 = jnp.full((k + preallocate, d), jnp.nan)
-
-    samples1 = samples1.at[0].set(current_state1)
-    samples2 = samples2.at[0].set(current_state2)
+    samples1 = [current_state1]
+    samples2 = [current_state2]
 
     current_nsamples1 = 1
     iteration = 0
@@ -38,7 +30,7 @@ def coupled_chain(key, kernel, coupled_kernel, initial, k, lag, max_iterations=f
 
         iteration += 1
         key, current_state1, current_pdf1 = kernel(key, current_state1, current_pdf1)
-        samples1 = samples1.at[current_nsamples1].set(current_state1)
+        samples1.append(current_state1)
         current_nsamples1 += 1
 
     # Coupled simulation
@@ -74,16 +66,8 @@ def coupled_chain(key, kernel, coupled_kernel, initial, k, lag, max_iterations=f
                 meet = True
                 meeting_time = iteration
 
-        # Dynamic memory allocation
-        if current_nsamples1 >= nrowsamples1:
-
-            samples1 = jnp.concatenate((samples1, jnp.full((nrowsamples1, d), jnp.nan)), axis=0)
-            samples2 = jnp.concatenate((samples2, jnp.full((nrowsamples1, d), jnp.nan)), axis=0)
-            nrowsamples1 *= 2
-
-        # Store samples
-        samples1 = samples1.at[current_nsamples1].set(current_state1)
-        samples2 = samples2.at[current_nsamples1 - lag].set(current_state2)
+        samples1.append(current_state1)
+        samples2.append(current_state2)
 
         current_nsamples1 += 1
 
@@ -91,11 +75,11 @@ def coupled_chain(key, kernel, coupled_kernel, initial, k, lag, max_iterations=f
         if iteration >= max(meeting_time, k):
             finished = True
 
-    # Remove unused memory
-    samples1 = samples1[:iteration + 1]
-    samples2 = samples2[:iteration - lag + 1]
+    samples1 = jnp.stack(samples1[:iteration + 1])
+    samples2 = jnp.stack(samples2[:iteration - lag + 1])
+    cost = lag + 2*(meeting_time-lag) + iteration-meeting_time
 
-    return {"samples1": samples1, "samples2": samples2, "meetingtime": meeting_time, "iteration": iteration, "finished": finished, "key": key}
+    return {"samples1": samples1, "samples2": samples2, "meetingtime": meeting_time, "iteration": iteration, "finished": finished, "cost": cost,"key": key}
 
 
 
@@ -114,31 +98,42 @@ def H_bar(c_chain, h_list, k, m, lag):
         print("error: k and m must be <= maxiter")
         return None
 
-    # -------- Main term --------
-    H_bar_val = []
+    correction_times = jnp.arange(k + lag, meeting_time)
+    has_correction = meeting_time > k + lag
+    correction_coefficients = (
+        jnp.floor_divide(correction_times - k, lag)
+        + jnp.floor_divide(
+            -jnp.maximum(lag, correction_times - m), lag
+        )
+        + 1
+    )
 
+    estimates = []
+    samples1_stop = max(m + 1, meeting_time)
     for h in h_list:
-        h_of_chain = jnp.stack([jnp.asarray(h(x)) for x in samples1[k:m+1, :]])
-        H_bar_val.append(jnp.sum(h_of_chain, axis=0))
+        h_samples1 = jax.vmap(lambda sample: jnp.asarray(h(sample)))(
+            samples1[:samples1_stop]
+        )
+        main_term = jnp.sum(h_samples1[k : m + 1], axis=0)
+        correction_term = jnp.zeros_like(jnp.squeeze(h_samples1[0]))
 
-    # -------- Correction term --------
-    deltas_term = []
+        if has_correction:
+            h_samples1_correction = jax.vmap(jnp.squeeze)(
+                h_samples1[correction_times]
+            )
+            h_samples2_correction = jax.vmap(
+                lambda sample: jnp.squeeze(h(sample))
+            )(samples2[correction_times - lag])
+            deltas = h_samples1_correction - h_samples2_correction
+            correction_term = jnp.tensordot(
+                correction_coefficients, deltas, axes=1
+            )
 
-    for h in h_list:
-        correction = 0.0
+        estimates.append(
+            (main_term + correction_term) / (m - k + 1)
+        )
 
-        if meeting_time > k + lag:
-            for t in range(k + lag, meeting_time):
-                coefficient = math.floor((t-k)/lag) - math.ceil(max(lag, t-m)/lag) + 1
-                delta = jnp.squeeze(h(samples1[t, :])) - jnp.squeeze(h(samples2[t-lag, :]))
-                correction = correction + coefficient * delta
-
-        deltas_term.append(correction)
-
-    return [
-        (main_term + correction_term) / (m - k + 1)
-        for main_term, correction_term in zip(H_bar_val, deltas_term)
-    ]
+    return estimates
 
 # Combine the coupled chain and H_bar to compute the unbiased estimator
 

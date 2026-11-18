@@ -74,9 +74,10 @@ def plot_ups_integrand_and_proposal(
 		lambda_grid,
 		k_grid,
 		m_grid,
-		Sigma,
 		mean_init,
 		Sigma_init,
+		Sigma,
+		jnp.linalg.cholesky(Sigma),
 		log_target_path,
 		grad_log_target_path,
 		lag=1,
@@ -224,9 +225,10 @@ def inefficiency_plot(
 			lambda_grid,
 			k_grid,
 			m_grid,
-			Sigma,
 			mean_init,
 			Sigma_init,
+			Sigma,
+			jnp.linalg.cholesky(Sigma),
 			log_target_path,
 			grad_log_target_path,
 			lag=1,
@@ -268,7 +270,7 @@ def inefficiency_plot(
 			for rep in range(n_rep_mcmc):
 				rep_key = replication_keys[i * n_rep_mcmc + rep]
 				key_ups, key_sups = jax.random.split(rep_key)
-				ups_estimate = UPS_estimator(
+				ups_estimate, _ = UPS_estimator(
 					key_ups,
 					lambda_grid,
 					m2,
@@ -284,7 +286,7 @@ def inefficiency_plot(
 				)
 				ups_estimates.append(float(jax.device_get(ups_estimate)))
 
-				sups_estimate = SUPS_estimator(
+				sups_estimate, _ = SUPS_estimator(
 					key_sups,
 					lambda_grid,
 					budget,
@@ -420,9 +422,10 @@ def inefficiency_vs_alpha(
 			lambda_grid,
 			k_grid,
 			m_grid,
-			Sigma,
 			mean_init,
 			Sigma_init,
+			Sigma,
+			jnp.linalg.cholesky(Sigma),
 			log_target_path,
 			grad_log_target_path,
 			lag=1,
@@ -472,7 +475,7 @@ def inefficiency_vs_alpha(
 							log_target_path,
 							grad_log_target_path,
 							M=M,
-						)
+						)[0]
 					)
 				)
 			)
@@ -491,7 +494,7 @@ def inefficiency_vs_alpha(
 							Sigma,
 							log_target_path,
 							grad_log_target_path,
-						)
+						)[0]
 					)
 				)
 			)
@@ -610,9 +613,10 @@ def plot_estimator_boxplot(
 		lambda_grid,
 		k_grid,
 		m_grid,
-		Sigma,
 		mean_init,
 		Sigma_init,
+		Sigma,
+		jnp.linalg.cholesky(Sigma),
 		log_target_path,
 		grad_log_target_path,
 		lag=1,
@@ -651,8 +655,8 @@ def plot_estimator_boxplot(
 					Sigma,
 					log_target_path,
 					grad_log_target_path,
-					M=M,
-				)
+							M=M,
+						)[0]
 			)
 		)
 		for rep_key in ups_keys
@@ -671,8 +675,8 @@ def plot_estimator_boxplot(
 					Sigma_init,
 					Sigma,
 					log_target_path,
-					grad_log_target_path,
-				)
+							grad_log_target_path,
+						)[0]
 			)
 		)
 		for rep_key in sups_keys

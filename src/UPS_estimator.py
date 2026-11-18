@@ -15,17 +15,15 @@ from src.tuning_umcmc import *
 # Now we implement E(lambda)
 
 
-def E_lambda(key, lam, lambda_grid, k_grid, m_grid, lag, mean_init, Sigma_init, Sigma, log_target_path, grad_log_target_path):
+def E_lambda(key, lam, lambda_grid, k_grid, m_grid, lag, mean_init, Sigma_init, Sigma, cholesky_sigma, log_target_path, grad_log_target_path):
 
     # --- find the nearest lambda to the grid ---
 
     index_lambda = jnp.argmin(jnp.abs(lambda_grid - lam))
-
-
-
     k_lam = int(k_grid[index_lambda])
     m_lam = int(m_grid[index_lambda])
-    lag_lam = int(lag[index_lambda])
+    lag_array = jnp.asarray(lag)
+    lag_lam = int(lag_array) if lag_array.ndim == 0 else int(lag_array[index_lambda])
 
     # --- log_target spécifique ---
     log_target = lambda x: log_target_path(x, path=lam)
@@ -35,11 +33,13 @@ def E_lambda(key, lam, lambda_grid, k_grid, m_grid, lag, mean_init, Sigma_init, 
     def ri(key): 
         return initial_distribution(key, log_target, mean_init, Sigma_init)
     
-    def sk(key, x, f): 
-        return MH_kernel(key, x, f, Sigma, log_target)
+    def sk(key, x, f):
+        return MH_kernel(
+            key, x, f, Sigma, log_target, cholesky_sigma
+        )
     
     def ck(key, x1, f1, x2, f2):
-        return MH_coupled_kernel(key, x1, f1, x2, f2, Sigma, log_target)
+        return MH_coupled_kernel(key, x1, f1, x2, f2, cholesky_sigma, log_target)
     
 
     # --- appel estimateur ---
@@ -51,7 +51,7 @@ def E_lambda(key, lam, lambda_grid, k_grid, m_grid, lag, mean_init, Sigma_init, 
         lag=lag_lam
     )
 
-    return umcmc_estimator["uestimator"][0]
+    return umcmc_estimator["uestimator"][0], umcmc_estimator["cost"]
 
 
 
@@ -104,19 +104,21 @@ def UPS_estimator(key, lambda_grid, m2, k_grid, m_grid, lag, mean_init, Sigma_in
     # Sample lambda ~ q
     lambdas, q_lambdas = jax.vmap(optimal_q, in_axes=(0, None, None))(subkeys_q, lambda_grid, m2)
 
-    E_lambda_estimates = jnp.stack([
+    E_lambda_results = [
         E_lambda(
             subkey, lam, lambda_grid, k_grid, m_grid, lag,
             mean_init, Sigma_init, Sigma, log_target_path,
             grad_log_target_path
         )
         for subkey, lam in zip(subkeys_E, lambdas)
-    ])
+    ]
+    E_lambda_estimates = jnp.stack([result[0] for result in E_lambda_results])
+    total_cost = jnp.sum(jnp.stack([result[1] for result in E_lambda_results]))
 
     # Importance sampling
     estimates = E_lambda_estimates / q_lambdas
 
-    return jnp.mean(estimates)
+    return jnp.mean(estimates), total_cost
 
 
 

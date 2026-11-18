@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+import plotnine as p9
 import jax
 import jax.numpy as jnp
 import jax.random as random
@@ -17,9 +18,10 @@ from src.umcmc_estimator import *
 def tune_km_grid(
     key,
     lambda_grid,
-    Sigma,
     mean_init,
     Sigma_init,
+    Sigma, 
+    cholesky_sigma,
     log_target_path,
     lag=1,
     nrep=100
@@ -40,12 +42,12 @@ def tune_km_grid(
 
         def sk(key, x, f):
             return MH_kernel(
-                key, x, f, Sigma, log_target
+                key, x, f, Sigma, log_target, cholesky_sigma
             )
 
         def ck(key, x1, f1, x2, f2):
             return MH_coupled_kernel(
-                key, x1, f1, x2, f2, Sigma, log_target
+                key, x1, f1, x2, f2, cholesky_sigma, log_target
             )
 
         # One coupled-chain simulation
@@ -109,63 +111,60 @@ def tune_km_grid(
 def plot_km_grid(results, lambda_grid):
 
     k_grid = np.asarray(jax.device_get(results["k_grid"]))
-    m_grid = np.asarray(jax.device_get(results["m_grid"]))
-    meetings_df = results["meetings_df"]
-
     lambda_np = np.asarray(lambda_grid)
+    meetings_df = results["meetings_df"].copy()
+    k_df = pd.DataFrame({"lambda": lambda_np, "k": k_grid})
+    k_label_df = k_df.iloc[[0]].assign(label=r"$k_\lambda$")
+    violin_width = 0.8 * np.min(np.diff(lambda_np))
 
-    line_df = pd.DataFrame({
-        "lambda": lambda_np,
-        r"$k_\lambda$ (99% quantile)": k_grid,
-        r"$m_\lambda$ (constant cost)": m_grid
-    }).melt(id_vars="lambda", var_name="Parameter", value_name="Value")
-
-    sns.set_theme(style="whitegrid", context="paper", rc={
-        "axes.facecolor": "white",
-        "figure.facecolor": "white",
-        "axes.edgecolor": "#4D4D4D",
-        "axes.linewidth": 0.8,
-        "grid.color": "#D9D9D9",
-        "grid.linewidth": 0.8,
-        "font.size": 11,
-        "axes.labelsize": 12,
-        "axes.titlesize": 13,
-        "legend.fontsize": 10,
-        "xtick.labelsize": 10,
-        "ytick.labelsize": 10,
-    })
-
-    fig, axes = plt.subplots(1, 2, figsize=(10.8, 4.5), dpi=150)
-
-    sns.violinplot(data=meetings_df, x="lambda", y="meetings", inner=None, cut=0,
-                   color="#DCEAF4", linewidth=0.8, ax=axes[0])
-
-    sns.lineplot(x=np.arange(len(lambda_np)), y=k_grid, color="#0072B2",
-                 marker="o", linewidth=2.2, markersize=6.5, ax=axes[0],
-                 label=r"$k_\lambda$")
-
-    axes[0].set_xlabel(r"$\lambda$")
-    axes[0].set_ylabel("Meeting time")
-    axes[0].set_title(r"Meeting-time distribution and tuned $k$ for each $\lambda$")
-    axes[0].grid(True, axis="y")
-    axes[0].grid(False, axis="x")
-    sns.despine(ax=axes[0], top=True, right=True)
-    axes[0].legend(frameon=False, loc="upper left")
-
-    sns.lineplot(data=line_df, x="lambda", y="Value", hue="Parameter",
-                 style="Parameter", markers=True, dashes=False, linewidth=2.2,
-                 markersize=6.5, palette=["#0072B2", "#D55E00"], ax=axes[1])
-
-    axes[1].set_xlabel(r"$\lambda$")
-    axes[1].set_ylabel("Value")
-    axes[1].set_title(r"Tuned $k$ and $m$ for each $\lambda$")
-    axes[1].set_xlim(np.min(lambda_np), np.max(lambda_np))
-    axes[1].grid(True, axis="both")
-    sns.despine(ax=axes[1], top=True, right=True)
-    axes[1].legend(title=None, frameon=False, loc="upper left", bbox_to_anchor=(0.0, 0.92))
-
-    plt.tight_layout()
-    plt.show()
+    plot = (
+        p9.ggplot()
+        + p9.geom_violin(
+            data=meetings_df,
+            mapping=p9.aes(x="lambda", y="meetings", group="lambda"),
+            width=violin_width,
+            fill="white",
+            color="black",
+            size=0.35,
+        )
+        + p9.geom_line(
+            data=k_df,
+            mapping=p9.aes(x="lambda", y="k"),
+            inherit_aes=False,
+            color="black",
+            size=0.6,
+        )
+        + p9.geom_point(
+            data=k_df,
+            mapping=p9.aes(x="lambda", y="k"),
+            inherit_aes=False,
+            color="black",
+            fill="white",
+            size=1.5,
+        )
+        + p9.geom_text(
+            data=k_label_df,
+            mapping=p9.aes(x="lambda", y="k", label="label"),
+            inherit_aes=False,
+            nudge_x=0.02,
+            nudge_y=0.1,
+            ha="left",
+            va="bottom",
+            color="black",
+            size=11,
+        )
+        + p9.scale_x_continuous(
+            breaks=np.linspace(lambda_np.min(), lambda_np.max(), 5)
+        )
+        + p9.labs(x=r"$\lambda$", y="Meeting time", title=None)
+        + p9.theme_classic(base_size=9)
+        + p9.theme(
+            figure_size=(6.5, 3.5),
+            plot_background=p9.element_rect(fill="white", color="white"),
+            panel_background=p9.element_rect(fill="white", color="white"),
+        )
+    )
+    return plot
 
 
 
@@ -174,137 +173,89 @@ def estimate_moments(key,
     lambda_grid,
     k_grid,
     m_grid,
-    Sigma,
     mean_init,
-    Sigma_init, 
+    Sigma_init,
+    Sigma, 
+    cholesky_sigma, 
     log_target_path,
     grad_log_target_path,
     lag=1,
     nrep=20):
 
-    n_lambda = len(lambda_grid)
+    from src.UPS_estimator import E_lambda
 
+
+    n_lambda = len(lambda_grid)
     m1 = jnp.zeros(n_lambda)
     m2 = jnp.zeros(n_lambda)
     var = jnp.zeros(n_lambda)
+    lambda_keys = random.split(key, n_lambda)
 
-    for ilambda, lam in enumerate(
-        tqdm(lambda_grid, desc="estimating moments")
-    ):
+    for ilambda, lam in enumerate(tqdm(lambda_grid, desc="estimating moments")):
+        replication_keys = random.split(lambda_keys[ilambda], nrep)
+        estimates = []
 
-        log_target = lambda x: log_target_path(x, path=lam)
-
-        h_list = [
-            lambda x: grad_log_target_path(x, path =lam),
-            lambda x: grad_log_target_path(x, path=lam)**2
-        ]
-
-        def ri(rep_key):
-            return initial_distribution(
-                rep_key, log_target, mean_init, Sigma_init
+        for rep_key in replication_keys:
+            estimate, _ = E_lambda(
+                rep_key,
+                lam,
+                lambda_grid,
+                k_grid,
+                m_grid,
+                lag,
+                mean_init,
+                Sigma_init,
+                Sigma,
+                cholesky_sigma,
+                log_target_path,
+                grad_log_target_path,
             )
+            estimates.append(estimate)
 
-        def sk(rep_key, x, f):
-            return MH_kernel(rep_key, x, f, Sigma, log_target)
+        estimates = jnp.stack(estimates)
+        first_moment = jnp.mean(estimates)
+        second_moment = jnp.mean(estimates**2)
 
-        def ck(rep_key, x1, f1, x2, f2):
-            return MH_coupled_kernel(
-                rep_key, x1, f1, x2, f2, Sigma, log_target
-            )
+        m1 = m1.at[ilambda].set(first_moment)
+        m2 = m2.at[ilambda].set(second_moment)
+        var = var.at[ilambda].set(second_moment - first_moment**2)
 
-        def one_replication(rep_key):
-            res = unbiased_estimator(
-                rep_key, sk, ck, ri,
-                h_list,
-                k=int(k_grid[ilambda]),
-                m=int(m_grid[ilambda]),
-                lag=lag
-            )
-
-            return res["uestimator"][0], res["uestimator"][1]
-
-        # The meeting-time loop is data-dependent, so keep chain execution eager.
-    
-        keys = random.split(key, nrep)
-        estimates = [one_replication(rep_key) for rep_key in keys]
-        estimators_m1 = jnp.stack([estimate[0] for estimate in estimates])
-        estimators_m2 = jnp.stack([estimate[1] for estimate in estimates])
-
-        # Monte Carlo estimates
-        m1_lambda = jnp.mean(estimators_m1)
-        m2_lambda = jnp.mean(estimators_m2)
-
-        var_lambda = m2_lambda - m1_lambda**2
-
-        m1 = m1.at[ilambda].set(m1_lambda)
-        m2 = m2.at[ilambda].set(m2_lambda)
-        var = var.at[ilambda].set(var_lambda)
-
-    return {
-        "m1": m1,
-        "m2": m2,
-        "var": var
-    }
-
+    return {"m1": m1, "m2": m2, "var": var}
 
 def plot_m2_var(results, lambda_grid):
-
-    lambda_grid = np.asarray(lambda_grid)
-    m2 = np.asarray(jax.device_get(results["m2"]))
-    var = np.asarray(jax.device_get(results["var"]))
-
-    df = pd.DataFrame({
-        r"$\lambda$": lambda_grid,
-        r"$m_2(\lambda)$": m2,
-        r"$\mathrm{Var}(\widehat I_\lambda)$": var
-    })
-
-    df_long = df.melt(
-        id_vars=r"$\lambda$",
+    lambda_values = np.asarray(lambda_grid)
+    labels = {
+        r"$\hat m_1(\lambda)$": np.asarray(jax.device_get(results["m1"])),
+        r"$\hat m_2(\lambda)$": np.asarray(jax.device_get(results["m2"])),
+        r"$\widehat{\mathrm{Var}}(\hat E(\lambda))$": np.asarray(
+            jax.device_get(results["var"])
+        ),
+    }
+    data = pd.DataFrame({"lambda": lambda_values, **labels})
+    data = data.melt(
+        id_vars="lambda",
         var_name="Quantity",
-        value_name="Value"
+        value_name="Value",
     )
 
-    sns.set_theme(style="whitegrid", context="paper")
-
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4), dpi=150)
-
-    sns.lineplot(
-        data=df,
-        x=r"$\lambda$",
-        y=r"$m_2(\lambda)$",
-        marker="o",
-        linewidth=2,
-        color="#0072B2",
-        ax=axes[0]
+    plot = (
+        p9.ggplot(data, p9.aes(x="lambda", y="Value", group="Quantity"))
+        + p9.geom_line(color="black", size=0.6)
+        + p9.geom_point(color="black", fill="white", size=1.5)
+        + p9.facet_wrap("~Quantity", scales="free_y", nrow=1)
+        + p9.labs(x=r"$\lambda$", y="", title=None)
+        + p9.theme_classic(base_size=11)
+        + p9.theme(
+            figure_size=(8, 3),
+            strip_background=p9.element_blank(),
+            strip_text=p9.element_text(size=11),
+            axis_title_x=p9.element_text(size=11),
+            axis_title_y=p9.element_blank(),
+            panel_background=p9.element_rect(fill="white", color="white"),
+            plot_background=p9.element_rect(fill="white", color="white"),
+        )
     )
-
-    axes[0].set_title(r"Second moment $m_2(\lambda)$")
-    axes[0].set_xlabel(r"$\lambda$")
-    axes[0].set_ylabel(r"$m_2(\lambda)$")
-
-    sns.lineplot(
-        data=df,
-        x=r"$\lambda$",
-        y=r"$\mathrm{Var}(\widehat I_\lambda)$",
-        marker="o",
-        linewidth=2,
-        color="#D55E00",
-        ax=axes[1]
-    )
-
-    axes[1].set_title(r"Variance of $\widehat I_\lambda$")
-    axes[1].set_xlabel(r"$\lambda$")
-    axes[1].set_ylabel(r"$\mathrm{Var}(\widehat I_\lambda)$")
-
-    for ax in axes:
-        ax.grid(True, alpha=0.3)
-        sns.despine(ax=ax)
-
-    plt.tight_layout()
-    plt.show()
-
-    return df
+    return plot
 
 
 
@@ -346,6 +297,7 @@ def tune_initial_distribution(
 
     d = len(mean_init)
     n_lambda = len(lambda_grid)
+    cholesky_sigma = cholesky(Sigma)
 
     m1 = jnp.zeros((n_lambda, d))
     m2 = jnp.zeros((n_lambda, d, d))
@@ -361,10 +313,14 @@ def tune_initial_distribution(
             return initial_distribution(rep_key, log_target, mean_init, Sigma_init)
 
         def sk(rep_key, x, f):
-            return MH_kernel(rep_key, x, f, Sigma, log_target)
+            return MH_kernel(
+                rep_key, x, f, Sigma, log_target, cholesky_sigma
+            )
 
         def ck(rep_key, x1, f1, x2, f2):
-            return MH_coupled_kernel(rep_key, x1, f1, x2, f2, Sigma, log_target)
+            return MH_coupled_kernel(
+                rep_key, x1, f1, x2, f2, cholesky_sigma, log_target
+            )
 
         key, subkey = random.split(key)
 
