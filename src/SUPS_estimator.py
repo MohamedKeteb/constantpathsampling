@@ -141,7 +141,7 @@ def neyman_allocation(key, lambda_grid, sigma, M):
 
 
 
-def SUPS_estimator(key, lambda_grid, budget, k_grid, m_grid, lag, mean_init, Sigma_init, Sigma, log_target_path, grad_log_target_path):
+def SUPS_estimator(key, lambda_grid, budget, k_grid, m_grid, lag, mean_init, Sigma_init, Sigma,cholesky_sigma, log_target_path, grad_log_target_path):
 
     L = len(budget)
     # Compute all bin widths
@@ -167,7 +167,7 @@ def SUPS_estimator(key, lambda_grid, budget, k_grid, m_grid, lag, mean_init, Sig
                 subkeys_E[j],
                 lambdas[j],
                 lambda_grid, k_grid, m_grid, lag,
-                mean_init, Sigma_init, Sigma,
+                mean_init, Sigma_init, Sigma, cholesky_sigma,
                 log_target_path, grad_log_target_path
             )
             for j in range(M_ell)

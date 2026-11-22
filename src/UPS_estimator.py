@@ -94,7 +94,7 @@ def optimal_q(key, lambda_grid, m2):
 
 # We implement the UPS estimator as follows:
 
-def UPS_estimator(key, lambda_grid, m2, k_grid, m_grid, lag, mean_init, Sigma_init, Sigma, log_target_path, grad_log_target_path, M):
+def UPS_estimator(key, lambda_grid, m2, k_grid, m_grid, lag, mean_init, Sigma_init, Sigma, cholesky_Sigma, log_target_path, grad_log_target_path, M):
 
     key1, key2 = jax.random.split(key)
 
@@ -107,7 +107,7 @@ def UPS_estimator(key, lambda_grid, m2, k_grid, m_grid, lag, mean_init, Sigma_in
     E_lambda_results = [
         E_lambda(
             subkey, lam, lambda_grid, k_grid, m_grid, lag,
-            mean_init, Sigma_init, Sigma, log_target_path,
+            mean_init, Sigma_init, Sigma, cholesky_Sigma, log_target_path,
             grad_log_target_path
         )
         for subkey, lam in zip(subkeys_E, lambdas)
