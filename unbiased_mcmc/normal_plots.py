@@ -104,10 +104,19 @@ def compare_estimators(
 	M_is = max(1, int(round((ups_costs.mean() + sups_costs.mean()) / 2)))
 	log_weight = lambda x: log_target1(x, D) - log_target0(x)
 	proposal = lambda: np.random.normal(size=d)
+	batch_log_weight = lambda samples: log_target1(samples, D) - log_target0(samples)
+	batch_proposal = lambda sample_count: np.random.normal(size=(sample_count, d))
 	is_values = [None] * nrep
 	with ThreadPoolExecutor(max_workers=max_workers) as executor:
 		is_futures = {
-			executor.submit(IS_estimator, log_weight, proposal, M_is): index
+			executor.submit(
+				IS_estimator,
+				log_weight,
+				proposal,
+				M_is,
+				batch_log_weight=batch_log_weight,
+				batch_proposal=batch_proposal,
+			): index
 			for index in range(nrep)
 		}
 		for future in tqdm(
@@ -170,7 +179,7 @@ def compare_estimators(
 			size=12,
 		)
 		+ p9.labs(x="", y="Estimate", title=None)
-		+ p9.theme_classic(base_size=11)
+		+ p9.theme_classic(base_size=15)
 		+ p9.theme(figure_size=(6, 4))
 	)
 	results["plot"] = comparison_plot
@@ -182,6 +191,217 @@ def compare_estimators(
 	)
 	print("MSE:", comparison_mse)
 	return results
+
+
+def compare_estimators_mse_by_budget(
+	lambda_grid,
+	m2,
+	sigma,
+	k_grid,
+	m_grid,
+	lag,
+	mean_init,
+	Sigma_init,
+	Sigma,
+	cholesky_Sigma,
+	inv_cholesky_Sigma,
+	log_target_path,
+	grad_log_target_path,
+	log_target0,
+	log_target1,
+	D,
+	d,
+	M_values,
+	nrep,
+	true_value=0.0,
+	n_workers=14,
+):
+	
+
+	max_workers = min(os.cpu_count() or 1, n_workers, 2 * nrep)
+	log_weight = lambda x: log_target1(x, D) - log_target0(x)
+	proposal = lambda: np.random.normal(size=d)
+	records = []
+	replicates = {}
+	budget_results = {}
+
+	for M in M_values:
+		budget = neyman_allocation(lambda_grid, sigma, M)
+
+		def run_ups(_):
+			estimate, cost = UPS_estimator(
+				lambda_grid,
+				m2,
+				k_grid,
+				m_grid,
+				lag,
+				mean_init,
+				Sigma_init,
+				Sigma,
+				cholesky_Sigma,
+				inv_cholesky_Sigma,
+				log_target_path,
+				grad_log_target_path,
+				M,
+			)
+			return float(np.asarray(estimate)), float(np.asarray(cost))
+
+		def run_sups(_):
+			estimate, cost = SUPS_estimator(
+				lambda_grid,
+				budget,
+				k_grid,
+				m_grid,
+				lag,
+				mean_init,
+				Sigma_init,
+				Sigma,
+				cholesky_Sigma,
+				inv_cholesky_Sigma,
+				log_target_path,
+				grad_log_target_path,
+			)
+			return float(np.asarray(estimate)), float(np.asarray(cost))
+
+		method_runs = {"UPS": run_ups, "SUPS": run_sups}
+		method_results = {method: [None] * nrep for method in method_runs}
+		with ThreadPoolExecutor(max_workers=max_workers) as executor:
+			future_methods = {
+				executor.submit(run, index): (method, index)
+				for method, run in method_runs.items()
+				for index in range(nrep)
+			}
+			for future in tqdm(
+				as_completed(future_methods),
+				total=len(future_methods),
+				desc=f"M={M} UPS/SUPS",
+			):
+				method, index = future_methods[future]
+				method_results[method][index] = future.result()
+
+		ups_values = np.asarray([result[0] for result in method_results["UPS"]])
+		ups_costs = np.asarray([result[1] for result in method_results["UPS"]])
+		sups_values = np.asarray([result[0] for result in method_results["SUPS"]])
+		sups_costs = np.asarray([result[1] for result in method_results["SUPS"]])
+		M_is = max(1, int(round((ups_costs.mean() + sups_costs.mean()) / 2)))
+		budget_results[int(M)] = {
+			"UPS": (ups_values, float(ups_costs.mean())),
+			"SUPS": (sups_values, float(sups_costs.mean())),
+			"M_is": M_is,
+		}
+
+	M_is_by_budget = {
+		budget: result["M_is"] for budget, result in budget_results.items()
+	}
+	max_M_is = max(M_is_by_budget.values())
+	batch_log_weight = lambda samples: log_target1(samples, D) - log_target0(samples)
+	batch_proposal = lambda sample_count: np.random.normal(size=(sample_count, d))
+
+	def run_is_replication(_):
+		samples = batch_proposal(max_M_is)
+		log_weights = np.asarray(batch_log_weight(samples), dtype=float)
+		if log_weights.shape != (max_M_is,):
+			raise ValueError("batch log weight must return one value per IS sample")
+		cumulative_log_sums = np.logaddexp.accumulate(log_weights)
+		return {
+			budget: float(cumulative_log_sums[M_is - 1] - np.log(M_is))
+			for budget, M_is in M_is_by_budget.items()
+		}
+
+	is_replications = [None] * nrep
+	with ThreadPoolExecutor(max_workers=max_workers) as executor:
+		is_futures = {
+			executor.submit(run_is_replication, index): index
+			for index in range(nrep)
+		}
+		for future in tqdm(
+			as_completed(is_futures),
+			total=nrep,
+			desc=f"IS prefixes (max M={max_M_is})",
+		):
+			is_replications[is_futures[future]] = future.result()
+
+	for M in M_values:
+		budget = int(M)
+		M_is = M_is_by_budget[budget]
+		is_values = np.asarray(
+			[replication[budget] for replication in is_replications], dtype=float
+		)
+		method_values = {
+			method: result
+			for method, result in budget_results[budget].items()
+			if method != "M_is"
+		}
+		method_values["IS"] = (is_values, float(M_is))
+		replicates[budget] = {
+			method: values.copy() for method, (values, _) in method_values.items()
+		}
+		for method, (values, mean_cost) in method_values.items():
+			bias_squared = float((np.mean(values) - true_value) ** 2)
+			variance = float(np.var(values))
+			records.append(
+				{
+					"M": budget,
+					"Estimator": method,
+					"Cost": float(mean_cost),
+					"Bias squared": bias_squared,
+					"Variance": variance,
+					"MSE": bias_squared + variance,
+					"M_is": M_is,
+				}
+			)
+
+	results_data = pd.DataFrame(records)
+	plots = {}
+	for metric in ("Bias squared", "Variance", "MSE"):
+		metric_data = results_data.loc[
+			(results_data["Cost"] > 0) & (results_data[metric] > 0)
+		].copy()
+		min_exponent = int(np.floor(np.log10(metric_data["Cost"].min())))
+		max_exponent = int(np.ceil(np.log10(metric_data["Cost"].max())))
+		if min_exponent == max_exponent:
+			max_exponent += 1
+		cost_breaks = np.power(10.0, np.arange(min_exponent, max_exponent + 1))
+		plot = (
+			p9.ggplot(
+				metric_data,
+				p9.aes(x="Cost", y=metric, group="Estimator"),
+			)
+			+ p9.geom_line(color="black")
+			+ p9.geom_point(p9.aes(shape="Estimator"), color="black", size=2)
+			+ p9.geom_text(
+				data=metric_data.loc[metric_data["Estimator"] == "UPS"],
+				mapping=p9.aes(label="M"),
+				va="bottom",
+				format_string="M={}",
+				size=14,
+				inherit_aes=True,
+				show_legend=False,
+			)
+			+ p9.scale_shape_manual(values={"UPS": "s", "SUPS": "o", "IS": "^"})
+			+ p9.scale_x_log10(
+				breaks=cost_breaks,
+				limits=(cost_breaks[0], cost_breaks[-1]),
+			)
+			+ p9.scale_y_log10()
+			+ p9.labs(
+				x="average cost",
+				y=f"{metric}",
+				shape="",
+			)
+			+ p9.theme_classic(base_size=13)
+			+ p9.theme(figure_size=(6, 4))
+		)
+		if metric == "Bias squared":
+			plot += p9.theme(
+				legend_position=(0.12, 0.9),
+				legend_justification=(0, 1),
+				legend_text=p9.element_text(size=15),
+			)
+		else:
+			plot += p9.theme(legend_position="none")
+		plots[metric] = plot
+	return {"data": results_data, "replicates": replicates, "plots": plots}
 
 
 def plot_E_lambda_over_q(
@@ -272,7 +492,7 @@ def plot_E_lambda_over_q(
 		+ p9.geom_line(color="black", size=0.6)
 		+ p9.geom_point(color="black", fill="white", size=1.5)
 		+ p9.labs(x=r"$\lambda$", y=r"$\widehat{E}(\lambda) / \nu(\lambda)$", title=None)
-		+ p9.theme_classic(base_size=11)
+		+ p9.theme_classic(base_size=15)
 		+ p9.theme(
 			figure_size=(6, 4),
 			panel_background=p9.element_rect(fill="white", color="white"),
