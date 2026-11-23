@@ -369,15 +369,6 @@ def compare_estimators_mse_by_budget(
 			)
 			+ p9.geom_line(color="black")
 			+ p9.geom_point(p9.aes(shape="Estimator"), color="black", size=2)
-			+ p9.geom_text(
-				data=metric_data.loc[metric_data["Estimator"] == "UPS"],
-				mapping=p9.aes(label="M"),
-				va="bottom",
-				format_string="M={}",
-				size=14,
-				inherit_aes=True,
-				show_legend=False,
-			)
 			+ p9.scale_shape_manual(values={"UPS": "s", "SUPS": "o", "IS": "^"})
 			+ p9.scale_x_log10(
 				breaks=cost_breaks,
@@ -389,14 +380,29 @@ def compare_estimators_mse_by_budget(
 				y=f"{metric}",
 				shape="",
 			)
-			+ p9.theme_classic(base_size=13)
+			+ p9.theme_classic(base_size=11)
 			+ p9.theme(figure_size=(6, 4))
 		)
 		if metric == "Bias squared":
+			label_data = metric_data.loc[metric_data["Estimator"] == "UPS"].copy()
+			label_data["M_label"] = label_data["M"].astype(str)
+			label_data["label_y"] = label_data[metric] * 1.1
+			if not label_data.empty:
+				label_data.loc[label_data.index[0], "M_label"] = (
+					f"M={label_data.iloc[0]['M']}"
+				)
+			plot += p9.geom_text(
+				data=label_data,
+				mapping=p9.aes(y="label_y", label="M_label"),
+				va="bottom",
+				size=11,
+				inherit_aes=True,
+				show_legend=False,
+			)
 			plot += p9.theme(
-				legend_position=(0.12, 0.9),
+				legend_position=(0.02, 0.6),
 				legend_justification=(0, 1),
-				legend_text=p9.element_text(size=15),
+				legend_text=p9.element_text(size=11),
 			)
 		else:
 			plot += p9.theme(legend_position="none")
