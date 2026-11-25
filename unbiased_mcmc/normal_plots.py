@@ -176,11 +176,14 @@ def compare_estimators(
 			ha="center",
 			va="bottom",
 			color="#b44b35",
-			size=12,
+			size=18,
 		)
-		+ p9.labs(x="", y="Estimate", title=None)
+		+ p9.labs(x="", y="", title=None)
 		+ p9.theme_classic(base_size=15)
-		+ p9.theme(figure_size=(6, 4))
+		+ p9.theme(
+			figure_size=(6, 4),
+			axis_text_x=p9.element_text(size=18),
+		)
 	)
 	results["plot"] = comparison_plot
 
@@ -362,6 +365,16 @@ def compare_estimators_mse_by_budget(
 		if min_exponent == max_exponent:
 			max_exponent += 1
 		cost_breaks = np.power(10.0, np.arange(min_exponent, max_exponent + 1))
+		shape_labels = {"UPS": "UPS", "SUPS": "SUPS", "IS": "IS"}
+		if metric == "MSE":
+			for estimator, estimator_data in metric_data.groupby("Estimator"):
+				if len(estimator_data) >= 2:
+					slope = np.polyfit(
+						np.log10(estimator_data["Cost"]),
+						np.log10(estimator_data[metric]),
+						1,
+					)[0]
+					shape_labels[estimator] = f"{estimator} (slope={slope:.2f})"
 		plot = (
 			p9.ggplot(
 				metric_data,
@@ -369,43 +382,53 @@ def compare_estimators_mse_by_budget(
 			)
 			+ p9.geom_line(color="black")
 			+ p9.geom_point(p9.aes(shape="Estimator"), color="black", size=2)
-			+ p9.scale_shape_manual(values={"UPS": "s", "SUPS": "o", "IS": "^"})
+			+ p9.scale_shape_manual(
+				values={"UPS": "s", "SUPS": "o", "IS": "^"},
+				labels=shape_labels,
+			)
 			+ p9.scale_x_log10(
 				breaks=cost_breaks,
 				limits=(cost_breaks[0], cost_breaks[-1]),
 			)
 			+ p9.scale_y_log10()
 			+ p9.labs(
-				x="average cost",
-				y=f"{metric}",
+				x="Average cost",
+				y="",
 				shape="",
 			)
 			+ p9.theme_classic(base_size=11)
-			+ p9.theme(figure_size=(6, 4))
+			+ p9.theme(
+				figure_size=(6, 4),
+				axis_text_x=p9.element_text(size=14),
+				axis_title_x=p9.element_text(size=15),
+			)
 		)
-		if metric == "Bias squared":
-			label_data = metric_data.loc[metric_data["Estimator"] == "UPS"].copy()
-			label_data["M_label"] = label_data["M"].astype(str)
-			label_data["label_y"] = label_data[metric] * 1.1
-			if not label_data.empty:
-				label_data.loc[label_data.index[0], "M_label"] = (
-					f"M={label_data.iloc[0]['M']}"
-				)
-			plot += p9.geom_text(
-				data=label_data,
-				mapping=p9.aes(y="label_y", label="M_label"),
-				va="bottom",
-				size=11,
-				inherit_aes=True,
-				show_legend=False,
+		label_data = metric_data.loc[
+			(metric_data["Estimator"] == "IS")
+			& metric_data["M"].isin([20, M_values[-1]])
+		].copy()
+		label_data["M_label"] = label_data["M"].map(
+			lambda value: "M=20" if value == 20 else str(value)
+		)
+		label_data["label_y"] = label_data[metric] * np.where(
+			np.arange(len(label_data)) % 2 == 0, 1.75, 1 / 1.75
+		)
+		plot += p9.geom_text(
+			data=label_data,
+			mapping=p9.aes(y="label_y", label="M_label"),
+			va="center",
+			size=15,
+			inherit_aes=True,
+			show_legend=False,
+		)
+		#if metric == "Bias squared":
+		plot += p9.theme(
+				legend_position=(0.02, 0.02) if metric == "MSE" else (0.02, 0.6),
+				legend_justification=(0, 0) if metric == "MSE" else (0, 1),
+				legend_text=p9.element_text(size=15),
 			)
-			plot += p9.theme(
-				legend_position=(0.02, 0.6),
-				legend_justification=(0, 1),
-				legend_text=p9.element_text(size=11),
-			)
-		else:
-			plot += p9.theme(legend_position="none")
+		#else:
+		#	plot += p9.theme(legend_position="none")
 		plots[metric] = plot
 	return {"data": results_data, "replicates": replicates, "plots": plots}
 
@@ -497,10 +520,12 @@ def plot_E_lambda_over_q(
 		plot
 		+ p9.geom_line(color="black", size=0.6)
 		+ p9.geom_point(color="black", fill="white", size=1.5)
-		+ p9.labs(x=r"$\lambda$", y=r"$\widehat{E}(\lambda) / \nu(\lambda)$", title=None)
+		+ p9.labs(x=r"$\lambda$", y="", title=None)
 		+ p9.theme_classic(base_size=15)
 		+ p9.theme(
 			figure_size=(6, 4),
+			axis_text_x=p9.element_text(size=15),
+			axis_title_x=p9.element_text(size=15),
 			panel_background=p9.element_rect(fill="white", color="white"),
 			plot_background=p9.element_rect(fill="white", color="white"),
 		)

@@ -127,14 +127,16 @@ def plot_km_grid(results, lambda_grid):
 		+ p9.scale_x_continuous(
 			breaks=np.linspace(lambda_values.min(), lambda_values.max(), 5)
 		)
-		+ p9.labs(x=r"$\lambda$", y="Meeting time", color="")
-		+ p9.theme_classic(base_size=9)
+		+ p9.labs(x=r"$\lambda$", y="", color="")
+		+ p9.theme_classic(base_size=15)
 		+ p9.theme(
 			figure_size=(5, 3),
 			legend_position=(0.02, 0.98),
 			legend_justification=(0, 1),
 			legend_direction="horizontal",
 			legend_text=p9.element_text(size=15),
+			axis_text_x=p9.element_text(size=15),
+			axis_title_x=p9.element_text(size=15),
 			plot_background=p9.element_rect(fill="white", color="white"),
 			panel_background=p9.element_rect(fill="white", color="white"),
 		)
@@ -231,6 +233,7 @@ def plot_m1_m2(results, lambda_grid):
 			figure_size=(5, 3),
 			strip_background=p9.element_blank(),
 			strip_text=p9.element_text(size=15),
+			axis_text_x=p9.element_text(size=15),
 			axis_title_x=p9.element_text(size=15),
 			axis_title_y=p9.element_blank(),
 			panel_background=p9.element_rect(fill="white", color="white"),
