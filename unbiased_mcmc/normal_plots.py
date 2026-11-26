@@ -7,9 +7,10 @@ import plotnine as p9
 from tqdm.auto import tqdm
 
 from unbiased_mcmc.IS import IS_estimator
-from unbiased_mcmc.SUPS import SUPS_estimator, neyman_allocation
+from unbiased_mcmc.SUPS import SUPS_estimator, neyman_allocation, estimate_sigma
 from unbiased_mcmc.UPS import E_lambda
 from unbiased_mcmc.UPS import UPS_estimator
+from unbiased_mcmc.tune_umcmc import tune_km_grid, estimate_moments
 
 
 def compare_estimators(
@@ -218,12 +219,11 @@ def compare_estimators_mse_by_budget(
 	nrep,
 	true_value=0.0,
 	n_workers=14,
+	make_plots=True,
 ):
 	
 
 	max_workers = min(os.cpu_count() or 1, n_workers, 2 * nrep)
-	log_weight = lambda x: log_target1(x, D) - log_target0(x)
-	proposal = lambda: np.random.normal(size=d)
 	records = []
 	replicates = {}
 	budget_results = {}
@@ -356,7 +356,7 @@ def compare_estimators_mse_by_budget(
 
 	results_data = pd.DataFrame(records)
 	plots = {}
-	for metric in ("Bias squared", "Variance", "MSE"):
+	for metric in (("Bias squared", "Variance", "MSE") if make_plots else ()):
 		metric_data = results_data.loc[
 			(results_data["Cost"] > 0) & (results_data[metric] > 0)
 		].copy()
@@ -431,6 +431,293 @@ def compare_estimators_mse_by_budget(
 		#	plot += p9.theme(legend_position="none")
 		plots[metric] = plot
 	return {"data": results_data, "replicates": replicates, "plots": plots}
+
+
+def plot_mse_by_alpha(
+	lambda_grid,
+	Sigma,
+	mean_init,
+	Sigma_init,
+	cholesky_Sigma,
+	inv_cholesky_Sigma,
+	log_target0,
+	log_target1,
+	alpha_values=(0.5, 1, 2, 3),
+	M=100,
+	nrep=50,
+	n_tune=100,
+	n_moments=100,
+	n_pilot=100,
+	n_workers=14,
+):
+	"""Compare UPS, SUPS and IS MSE across mean shifts in dimension two."""
+	d = 2
+	rows = []
+	alpha_results = {}
+
+	for alpha in alpha_values:
+		D = alpha * np.ones(d)
+		log_target_path = lambda x, path, D=D: (
+			(1 - path) * log_target0(x) + path * log_target1(x, D)
+		)
+		grad_log_target_path = lambda x, path, D=D: (
+			log_target1(x, D) - log_target0(x)
+		)
+		km = tune_km_grid(
+			lambda_grid,
+			mean_init,
+			Sigma_init,
+			Sigma,
+			cholesky_Sigma,
+			inv_cholesky_Sigma,
+			log_target_path,
+			lag=1,
+			nrep=n_tune,
+		)
+		k_grid = km["k_grid"]
+		m_grid = km["m_grid"]
+		lag = k_grid
+		moment_results = estimate_moments(
+			lambda_grid,
+			k_grid,
+			m_grid,
+			mean_init,
+			Sigma_init,
+			Sigma,
+			cholesky_Sigma,
+			inv_cholesky_Sigma,
+			log_target_path,
+			grad_log_target_path,
+			lag=lag,
+			nrep=n_moments,
+		)
+		sigma = estimate_sigma(
+			lambda_grid,
+			k_grid,
+			m_grid,
+			lag,
+			mean_init,
+			Sigma_init,
+			Sigma,
+			cholesky_Sigma,
+			inv_cholesky_Sigma,
+			log_target_path,
+			grad_log_target_path,
+			N_pilot=n_pilot,
+		)
+		comparison = compare_estimators_mse_by_budget(
+			lambda_grid,
+			moment_results["m2"],
+			sigma,
+			k_grid,
+			m_grid,
+			lag,
+			mean_init,
+			Sigma_init,
+			Sigma,
+			cholesky_Sigma,
+			inv_cholesky_Sigma,
+			log_target_path,
+			grad_log_target_path,
+			log_target0,
+			log_target1,
+			D,
+			d,
+			M_values=(M,),
+			nrep=nrep,
+			true_value=0.0,
+			n_workers=n_workers,
+			make_plots=False,
+		)
+		data = comparison["data"].copy()
+		data["alpha"] = alpha
+		rows.append(data)
+		alpha_results[alpha] = comparison
+
+	results_data = pd.concat(rows, ignore_index=True)
+	plot = (
+		p9.ggplot(
+			results_data,
+			p9.aes(x="alpha", y="MSE", group="Estimator"),
+		)
+		+ p9.geom_line(color="black")
+		+ p9.geom_point(p9.aes(shape="Estimator"), color="black", size=2)
+		+ p9.scale_shape_manual(
+			values={"UPS": "s", "SUPS": "o", "IS": "^"},
+			labels={"UPS": "UPS", "SUPS": "SUPS", "IS": "IS"},
+		)
+		+ p9.scale_x_continuous(breaks=list(alpha_values))
+		+ p9.scale_y_log10()
+		+ p9.labs(x=r"$\alpha$", y="MSE", shape="")
+		+ p9.theme_classic(base_size=11)
+		+ p9.theme(
+			figure_size=(6, 4),
+			legend_position=(0.98, 0.02),
+			legend_justification=(1, 0),
+			legend_text=p9.element_text(size=15),
+			axis_text_x=p9.element_text(size=14),
+			axis_title_x=p9.element_text(size=15),
+		)
+	)
+	return {"data": results_data, "plot": plot, "by_alpha": alpha_results}
+
+
+def compare_estimators_mse_by_dimension(
+	lambda_grid,
+	log_target0,
+	log_target1,
+	dimensions=(2, 4, 8, 16, 32),
+	M_by_dimension= {2: 50, 4: 100, 8: 200, 16: 500, 32: 1000},
+	alpha=3.0,
+	nrep=50,
+	lag=1,
+	init_mean=-2.0,
+	init_variance=1.0,
+	n_tune=100,
+	n_pilot=100,
+	n_moments=100,
+	n_workers=14,
+):
+	"""Compare SUPS and IS error metrics against dimension for Gaussian shifts.
+
+	The mean shift is ``alpha * ones(d)``. Each dimension uses its corresponding
+	budget from ``M_by_dimension``. The IS sample count is set by the average
+	UPS/SUPS cost over ``nrep`` replications at that dimension and budget.
+	"""
+
+	rows = []
+	dimension_results = {}
+	for dimension in dimensions:
+		d = int(dimension)
+		if d not in M_by_dimension:
+			raise ValueError(f"Missing M budget for dimension d={d}")
+		M = int(M_by_dimension[d])
+		D = alpha * np.ones(d)
+		Sigma = np.eye(d)
+		Sigma_init = init_variance * np.eye(d)
+		mean_init_d = init_mean * np.ones(d)
+		cholesky_Sigma = np.linalg.cholesky(Sigma)
+		inv_cholesky_Sigma = np.linalg.inv(cholesky_Sigma)
+		log_target_path = lambda x, path, D=D: (
+			(1 - path) * log_target0(x) + path * log_target1(x, D)
+		)
+		grad_log_target_path = lambda x, path, D=D: (
+			log_target1(x, D) - log_target0(x)
+		)
+		km = tune_km_grid(
+			lambda_grid,
+			mean_init_d,
+			Sigma_init,
+			Sigma,
+			cholesky_Sigma,
+			inv_cholesky_Sigma,
+			log_target_path,
+			lag=lag,
+			nrep=n_tune,
+		)
+		k_grid = km["k_grid"]
+		m_grid = km["m_grid"]
+		moments = estimate_moments(
+			lambda_grid,
+			k_grid,
+			m_grid,
+			mean_init_d,
+			Sigma_init,
+			Sigma,
+			cholesky_Sigma,
+			inv_cholesky_Sigma,
+			log_target_path,
+			grad_log_target_path,
+			lag=lag,
+			nrep=n_moments,
+		)
+		sigma = estimate_sigma(
+			lambda_grid,
+			k_grid,
+			m_grid,
+			lag,
+			mean_init_d,
+			Sigma_init,
+			Sigma,
+			cholesky_Sigma,
+			inv_cholesky_Sigma,
+			log_target_path,
+			grad_log_target_path,
+			N_pilot=n_pilot,
+		)
+		comparison = compare_estimators_mse_by_budget(
+			lambda_grid,
+			moments["m2"],
+			sigma,
+			k_grid,
+			m_grid,
+			lag,
+			mean_init_d,
+			Sigma_init,
+			Sigma,
+			cholesky_Sigma,
+			inv_cholesky_Sigma,
+			log_target_path,
+			grad_log_target_path,
+			log_target0,
+			log_target1,
+			D,
+			d,
+			M_values=(M,),
+			nrep=nrep,
+			true_value=0.0,
+			n_workers=n_workers,
+			make_plots=False,
+		)
+		data = comparison["data"].copy()
+		data["Dimension"] = d
+		rows.append(data)
+		dimension_results[d] = comparison
+
+	results_data = pd.concat(rows, ignore_index=True)
+	results_data["Estimator"] = pd.Categorical(
+		results_data["Estimator"],
+		categories=["UPS", "SUPS", "IS"],
+		ordered=True,
+	)
+	plots = {}
+	for metric in ("Bias squared", "Variance", "MSE"):
+		metric_data = results_data.loc[results_data[metric] > 0].copy()
+		plot = (
+			p9.ggplot(
+				metric_data,
+				p9.aes(
+					x="Dimension",
+					y=metric,
+					group="Estimator",
+					shape="Estimator",
+				),
+			)
+			+ p9.geom_line(color="black")
+			+ p9.geom_point(color="black", size=2)
+			+ p9.scale_shape_manual(
+				values={"UPS": "s", "SUPS": "o", "IS": "^"},
+				limits=["UPS", "SUPS", "IS"],
+			)
+			+ p9.scale_x_continuous(breaks=list(dimensions))
+			+ p9.scale_y_log10()
+			+ p9.labs(x="Dimension", y=metric, shape="")
+			+ p9.theme_classic(base_size=11)
+			+ p9.theme(
+				figure_size=(6, 4),
+				axis_text_x=p9.element_text(size=14),
+				axis_title_x=p9.element_text(size=15),
+				legend_text=p9.element_text(size=15),
+				legend_position=(0.98, 0.02),
+				legend_justification=(1, 0),
+			)
+		)
+		plots[metric] = plot
+	return {
+		"data": results_data,
+		"plots": plots,
+		"by_dimension": dimension_results,
+	}
 
 
 def plot_E_lambda_over_q(
